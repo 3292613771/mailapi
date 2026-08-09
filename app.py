@@ -238,7 +238,12 @@ def admin():
     for buyer, emails in used.get("records", {}).items():
         all_used.extend(emails)
     
-    html = f'''
+    link_rows = ""
+    for lid, data in links.items():
+        status = data.get('status', 'active')
+        link_rows += f'<tr><td>{lid}</td><td>{", ".join(data["emails"])}</td><td>{"有效" if status=="active" else "已失效"}</td><td><button onclick="disableLink(\'{lid}\')">失效</button></td></tr>'
+    
+    html_content = f'''
     <h2>邮箱管理后台</h2>
     <p>总邮箱：{len(all_emails)} | 已分配：{len(set(all_used))} | 可用：{len(all_emails) - len(set(all_used))}</p>
     <hr>
@@ -257,45 +262,42 @@ def admin():
     <h3>已生成链接</h3>
     <table border="1">
         <tr><th>ID</th><th>邮箱</th><th>状态</th><th>操作</th></tr>
-    '''
-    for lid, data in links.items():
-        status = data.get('status', 'active')
-        html += f'<tr><td>{lid}</td><td>{", ".join(data["emails"])}</td><td>{"有效" if status=="active" else "已失效"}</td><td><button onclick="disableLink(\'{lid}\')">失效</button></td></tr>'
-    html += '</table>
+        {link_rows}
+    </table>
     <script>
-        async function generate() {
+        async function generate() {{
             const emails = document.getElementById("emails_input").value.split("\\n").filter(e => e.trim());
             if(!emails.length) return alert("请输入邮箱");
-            const res = await fetch("/api/admin_create_link", {
+            const res = await fetch("/api/admin_create_link", {{
                 method: "POST",
-                headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({
+                headers: {{"Content-Type": "application/json"}},
+                body: JSON.stringify({{
                     emails: emails,
                     type: document.getElementById("type_select").value,
                     days: parseInt(document.getElementById("days_input").value) || 30
-                })
-            });
+                }})
+            }});
             const data = await res.json();
             if(data.error) return alert(data.error);
             document.getElementById("result").innerHTML = "生成成功！链接：" + data.link_url;
             location.reload();
-        }
-        async function disableLink(id) {
+        }}
+        async function disableLink(id) {{
             if(!id) id = document.getElementById("disable_input").value.trim();
             if(!id) return alert("请输入链接ID");
             if(!confirm("确定失效吗？")) return;
-            const res = await fetch("/api/disable_link", {
+            const res = await fetch("/api/disable_link", {{
                 method: "POST",
-                headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({link_id: id})
-            });
+                headers: {{"Content-Type": "application/json"}},
+                body: JSON.stringify({{link_id: id}})
+            }});
             const data = await res.json();
-            if(data.success) { alert("已失效"); location.reload(); }
+            if(data.success) {{ alert("已失效"); location.reload(); }}
             else alert("失败：" + data.error);
-        }
+        }}
     </script>
     '''
-    return html
+    return html_content
 
 @app.route('/api/admin_create_link', methods=['POST'])
 def admin_create_link():
@@ -352,17 +354,17 @@ def query_page():
     if datetime.now() > datetime.strptime(data['expire_at'], "%Y-%m-%d %H:%M:%S"):
         return "链接已过期"
     emails = data['emails']
-    html = f'<h2>邮箱查询</h2><p>有效期至：{data["expire_at"]}</p>'
+    html_content = f'<h2>邮箱查询</h2><p>有效期至：{data["expire_at"]}</p>'
     for email in emails:
         result = get_latest_mails(email, 1)
         if isinstance(result, dict) and 'error' in result:
-            html += f'<p>❌ {email}：{result["error"]}</p>'
+            html_content += f'<p>❌ {email}：{result["error"]}</p>'
             continue
         if not result:
-            html += f'<p>📭 {email}：暂无邮件</p>'
+            html_content += f'<p>📭 {email}：暂无邮件</p>'
             continue
         mail = result[0]
-        html += f'''
+        html_content += f'''
         <div style="border:1px solid #ddd;padding:10px;margin:5px 0;">
             <b>{mail["sender"]}</b> {mail["time"]}<br>
             {mail["subject"]}<br>
@@ -370,7 +372,7 @@ def query_page():
             <a href="/view_raw?link_id={link_id}&mail_id={mail["mail_id"]}" target="_blank">查看完整邮件</a>
         </div>
         '''
-    return html
+    return html_content
 
 @app.route('/view_raw')
 def view_raw():

@@ -29,7 +29,7 @@ ACCOUNTS_FILE = "accounts.txt"
 USED_EMAILS_FILE = "used_emails.json"
 ADMIN_PASSWORD = "060910"
 DEFAULT_DAYS = 30
-DOMAIN = "mailauto.zeabur.app"
+DOMAIN = "mail-auto.zeabur.app"
 
 # ===== 读取账号 =====
 def load_accounts():
@@ -185,7 +185,6 @@ def get_latest_mails(email_addr, limit=1):
         all_mail_ids = []
         folder_info = []
         
-        # 读取收件箱、垃圾箱、广告邮件
         folders_to_read = ["INBOX", "垃圾箱", "广告邮件"]
         for folder in folders_to_read:
             try:
@@ -611,62 +610,84 @@ def admin():
 
     <script>
         async function generateManualLink() {
-    const emailsText = document.getElementById('manualEmails').value.trim();
-    const type = document.getElementById('emailType').value;
-    const days = parseInt(document.getElementById('manualDays').value) || 30;
+            var emailsText = document.getElementById('manualEmails').value.trim();
+            var type = document.getElementById('emailType').value;
+            var days = parseInt(document.getElementById('manualDays').value) || 30;
 
-    if (!emailsText) {
-        alert('请输入邮箱地址');
-        return;
-    }
+            if (!emailsText) {
+                alert('请输入邮箱地址');
+                return;
+            }
 
-    const emails = emailsText.split('\n').map(e => e.trim()).filter(e => e);
-    if (emails.length === 0) {
-        alert('请输入有效邮箱地址');
-        return;
-    }
+            var emails = emailsText.split('\n').map(function(e) { return e.trim(); }).filter(function(e) { return e; });
+            if (emails.length === 0) {
+                alert('请输入有效邮箱地址');
+                return;
+            }
 
-    const resultBox = document.getElementById('manualResultBox');
-    const resultContent = document.getElementById('manualResultContent');
-    resultBox.style.display = 'block';
-    resultContent.innerHTML = '生成中...';
+            var resultBox = document.getElementById('manualResultBox');
+            var resultContent = document.getElementById('manualResultContent');
+            resultBox.style.display = 'block';
+            resultContent.innerHTML = '生成中...';
 
-    try {
-        const res = await fetch('/api/admin_create_link', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                emails: emails,
-                type: type,
-                days: days
-            })
-        });
-        const data = await res.json();
+            try {
+                var res = await fetch('/api/admin_create_link', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        emails: emails,
+                        type: type,
+                        days: days
+                    })
+                });
+                var data = await res.json();
 
-        if (data.error) {
-            resultContent.innerHTML = '<div style="color:red;">' + data.error + '</div>';
-            return;
+                if (data.error) {
+                    resultContent.innerHTML = '<div style="color:red;">' + data.error + '</div>';
+                    return;
+                }
+
+                var html = '<div style="font-weight:bold;margin-bottom:10px;">生成成功</div>';
+                html += '<div style="margin-bottom:8px;">邮箱列表：</div>';
+                for (var i = 0; i < data.emails.length; i++) {
+                    html += '<div class="email-item">' + (i+1) + '. ' + data.emails[i] + '</div>';
+                }
+                html += '<div class="link-area">查询链接：<span style="color:#667eea;">' + data.link_url + '</span>';
+                html += '<button class="copy-btn" onclick="copyText(\'' + data.link_url + '\')">复制链接</button></div>';
+                html += '<div style="margin-top:8px;color:#999;font-size:13px;">有效期至：' + data.expire_at + '</div>';
+                html += '<button onclick="alert(\'邮箱：' + data.emails.join('、') + '\\n查询链接：' + data.link_url + '\')" style="margin-top:12px;padding:8px 20px;background:#667eea;color:white;border:none;border-radius:6px;cursor:pointer;font-size:13px;">复制全部</button>';
+
+                resultContent.innerHTML = html;
+                location.reload();
+
+            } catch (e) {
+                resultContent.innerHTML = '<div style="color:red;">请求失败：' + e.message + '</div>';
+            }
         }
 
-        let html = '<div style="font-weight:bold;margin-bottom:10px;">生成成功</div>';
-        html += '<div style="margin-bottom:8px;">邮箱列表：</div>';
-        data.emails.forEach(function(email, idx) {
-            html += '<div class="email-item">' + (idx+1) + '. ' + email + '</div>';
-        });
-        html += '<div class="link-area">查询链接：<span style="color:#667eea;">' + data.link_url + '</span>';
-        html += '<button class="copy-btn" onclick="copyText(\'' + data.link_url + '\')">复制链接</button></div>';
-        html += '<div style="margin-top:8px;color:#999;font-size:13px;">有效期至：' + data.expire_at + '</div>';
-        html += '<button onclick="alert(\'邮箱：' + data.emails.join('、') + '\\n查询链接：' + data.link_url + '\')" style="margin-top:12px;padding:8px 20px;background:#667eea;color:white;border:none;border-radius:6px;cursor:pointer;font-size:13px;">复制全部</button>';
+        async function disableLink(linkId) {
+            if (!confirm('确定要失效该链接吗？')) return;
+            
+            try {
+                var res = await fetch('/api/disable_link', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({link_id: linkId})
+                });
+                var data = await res.json();
+                if (data.success) {
+                    alert('链接已失效');
+                    location.reload();
+                } else {
+                    alert('操作失败：' + data.error);
+                }
+            } catch (e) {
+                alert('请求失败');
+            }
+        }
 
-        resultContent.innerHTML = html;
-        location.reload();
-
-    } catch (e) {
-        resultContent.innerHTML = '<div style="color:red;">请求失败：' + e.message + '</div>';
-    }
-}
         async function disableLinkByInput() {
-            const linkId = document.getElementById('disableLinkInput').value.trim();
+            var linkId = document.getElementById('disableLinkInput').value.trim();
             if (!linkId) {
                 alert('请输入链接ID');
                 return;
@@ -675,12 +696,12 @@ def admin():
             if (!confirm('确定要失效链接 ' + linkId + ' 吗？')) return;
             
             try {
-                const res = await fetch('/api/disable_link', {
+                var res = await fetch('/api/disable_link', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({link_id: linkId})
                 });
-                const data = await res.json();
+                var data = await res.json();
                 if (data.success) {
                     document.getElementById('disableResult').innerHTML = '<div style="color:green;font-weight:bold;">链接已失效</div>';
                     setTimeout(function(){ location.reload(); }, 1000);
@@ -693,14 +714,14 @@ def admin():
         }
 
         function copyText(text) {
-            navigator.clipboard.writeText(text).then(() => {
+            navigator.clipboard.writeText(text).then(function() {
                 alert('已复制');
             });
         }
 
         function copyAll(emails, link) {
-            const text = '邮箱：' + emails.replace(/,/g, '、') + '\\n查询链接：' + link;
-            navigator.clipboard.writeText(text).then(() => {
+            var text = '邮箱：' + emails.replace(/,/g, '、') + '\\n查询链接：' + link;
+            navigator.clipboard.writeText(text).then(function() {
                 alert('已复制全部内容');
             });
         }

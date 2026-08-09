@@ -29,7 +29,7 @@ ACCOUNTS_FILE = "accounts.txt"
 USED_EMAILS_FILE = "used_emails.json"
 ADMIN_PASSWORD = "060910"
 DEFAULT_DAYS = 30
-DOMAIN = "mailauto.zeabur.app"
+DOMAIN = "mail-auto.zeabur.app"
 
 # ===== 读取账号 =====
 def load_accounts():
@@ -278,11 +278,9 @@ def load_links():
         return {}
 
 def save_links(data):
-    # 保存主文件
     with open(LINKS_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
     
-    # 自动备份到 links_backup.json
     try:
         with open("links_backup.json", "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -612,97 +610,49 @@ def admin():
     </div>
 
     <script>
-        async function disableLink(linkId) {{
-            if (!confirm('确定要失效该链接吗？')) return;
-            
-            try {{
-                const res = await fetch('/api/disable_link', {{
-                    method: 'POST',
-                    headers: {{'Content-Type': 'application/json'}},
-                    body: JSON.stringify({{link_id: linkId}})
-                }});
-                const data = await res.json();
-                if (data.success) {{
-                    alert('链接已失效');
-                    location.reload();
-                }} else {{
-                    alert('操作失败：' + data.error);
-                }}
-            }} catch (e) {{
-                alert('请求失败');
-            }}
-        }}
-
-        async function disableLinkByInput() {{
-            const linkId = document.getElementById('disableLinkInput').value.trim();
-            if (!linkId) {{
-                alert('请输入链接ID');
-                return;
-            }}
-            
-            if (!confirm('确定要失效链接 ' + linkId + ' 吗？')) return;
-            
-            try {{
-                const res = await fetch('/api/disable_link', {{
-                    method: 'POST',
-                    headers: {{'Content-Type': 'application/json'}},
-                    body: JSON.stringify({{link_id: linkId}})
-                }});
-                const data = await res.json();
-                if (data.success) {{
-                    document.getElementById('disableResult').innerHTML = '<div style="color:green;font-weight:bold;">链接已失效</div>';
-                    setTimeout(function(){{ location.reload(); }}, 1000);
-                }} else {{
-                    document.getElementById('disableResult').innerHTML = '<div style="color:red;">' + data.error + '</div>';
-                }}
-            }} catch (e) {{
-                document.getElementById('disableResult').innerHTML = '<div style="color:red;">请求失败</div>';
-            }}
-        }}
-
-        async function generateManualLink() {{
+        async function generateManualLink() {
             const emailsText = document.getElementById('manualEmails').value.trim();
             const type = document.getElementById('emailType').value;
             const days = parseInt(document.getElementById('manualDays').value) || 30;
 
-            if (!emailsText) {{
+            if (!emailsText) {
                 alert('请输入邮箱地址');
                 return;
-            }}
+            }
 
             const emails = emailsText.split('\\n').map(e => e.trim()).filter(e => e);
-            if (emails.length === 0) {{
+            if (emails.length === 0) {
                 alert('请输入有效邮箱地址');
                 return;
-            }}
+            }
 
             const resultBox = document.getElementById('manualResultBox');
             const resultContent = document.getElementById('manualResultContent');
             resultBox.style.display = 'block';
             resultContent.innerHTML = '生成中...';
 
-            try {{
-                const res = await fetch('/api/admin_create_link', {{
+            try {
+                const res = await fetch('/api/admin_create_link', {
                     method: 'POST',
-                    headers: {{ 'Content-Type': 'application/json' }},
-                    body: JSON.stringify({{
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
                         emails: emails,
                         type: type,
                         days: days
-                    }})
-                }});
+                    })
+                });
                 const data = await res.json();
 
-                if (data.error) {{
+                if (data.error) {
                     resultContent.innerHTML = '<div style="color:red;">' + data.error + '</div>';
                     return;
-                }}
+                }
 
                 let html = '<div style="font-weight:bold;margin-bottom:10px;">生成成功</div>';
                 html += '<div style="margin-bottom:8px;">邮箱列表：</div>';
-                data.emails.forEach((email, idx) => {{
+                data.emails.forEach((email, idx) => {
                     html += '<div class="email-item">' + (idx+1) + '. ' + email + '</div>';
-                }});
+                });
                 html += '<div class="link-area">查询链接：<span style="color:#667eea;">' + data.link_url + '</span>';
                 html += '<button class="copy-btn" onclick="copyText(\'' + data.link_url + '\')">复制链接</button></div>';
                 html += '<div style="margin-top:8px;color:#999;font-size:13px;">有效期至：' + data.expire_at + '</div>';
@@ -711,23 +661,71 @@ def admin():
                 resultContent.innerHTML = html;
                 location.reload();
 
-            }} catch (e) {{
+            } catch (e) {
                 resultContent.innerHTML = '<div style="color:red;">请求失败：' + e.message + '</div>';
-            }}
-        }}
+            }
+        }
 
-        function copyText(text) {{
-            navigator.clipboard.writeText(text).then(() => {{
+        async function disableLink(linkId) {
+            if (!confirm('确定要失效该链接吗？')) return;
+            
+            try {
+                const res = await fetch('/api/disable_link', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({link_id: linkId})
+                });
+                const data = await res.json();
+                if (data.success) {
+                    alert('链接已失效');
+                    location.reload();
+                } else {
+                    alert('操作失败：' + data.error);
+                }
+            } catch (e) {
+                alert('请求失败');
+            }
+        }
+
+        async function disableLinkByInput() {
+            const linkId = document.getElementById('disableLinkInput').value.trim();
+            if (!linkId) {
+                alert('请输入链接ID');
+                return;
+            }
+            
+            if (!confirm('确定要失效链接 ' + linkId + ' 吗？')) return;
+            
+            try {
+                const res = await fetch('/api/disable_link', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({link_id: linkId})
+                });
+                const data = await res.json();
+                if (data.success) {
+                    document.getElementById('disableResult').innerHTML = '<div style="color:green;font-weight:bold;">链接已失效</div>';
+                    setTimeout(function(){ location.reload(); }, 1000);
+                } else {
+                    document.getElementById('disableResult').innerHTML = '<div style="color:red;">' + data.error + '</div>';
+                }
+            } catch (e) {
+                document.getElementById('disableResult').innerHTML = '<div style="color:red;">请求失败</div>';
+            }
+        }
+
+        function copyText(text) {
+            navigator.clipboard.writeText(text).then(() => {
                 alert('已复制');
-            }});
-        }}
+            });
+        }
 
-        function copyAll(emails, link) {{
+        function copyAll(emails, link) {
             const text = '邮箱：' + emails.replace(/,/g, '、') + '\\n查询链接：' + link;
-            navigator.clipboard.writeText(text).then(() => {{
+            navigator.clipboard.writeText(text).then(() => {
                 alert('已复制全部内容');
-            }});
-        }}
+            });
+        }
     </script>
 </body>
 </html>

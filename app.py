@@ -20,7 +20,7 @@ LINKS_FILE = "links.json"
 USED_EMAILS_FILE = "used_emails.json"
 ADMIN_PASSWORD = "060910"
 DEFAULT_DAYS = 30
-DOMAIN = "mail-auto.zeabur.app"
+DOMAIN = "mailauto.zeabur.app"
 
 # ===== 读取邮箱 =====
 def load_accounts():

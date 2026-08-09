@@ -611,82 +611,60 @@ def admin():
 
     <script>
         async function generateManualLink() {
-            const emailsText = document.getElementById('manualEmails').value.trim();
-            const type = document.getElementById('emailType').value;
-            const days = parseInt(document.getElementById('manualDays').value) || 30;
+    const emailsText = document.getElementById('manualEmails').value.trim();
+    const type = document.getElementById('emailType').value;
+    const days = parseInt(document.getElementById('manualDays').value) || 30;
 
-            if (!emailsText) {
-                alert('请输入邮箱地址');
-                return;
-            }
+    if (!emailsText) {
+        alert('请输入邮箱地址');
+        return;
+    }
 
-            const emails = emailsText.split('\\n').map(e => e.trim()).filter(e => e);
-            if (emails.length === 0) {
-                alert('请输入有效邮箱地址');
-                return;
-            }
+    const emails = emailsText.split('\n').map(e => e.trim()).filter(e => e);
+    if (emails.length === 0) {
+        alert('请输入有效邮箱地址');
+        return;
+    }
 
-            const resultBox = document.getElementById('manualResultBox');
-            const resultContent = document.getElementById('manualResultContent');
-            resultBox.style.display = 'block';
-            resultContent.innerHTML = '生成中...';
+    const resultBox = document.getElementById('manualResultBox');
+    const resultContent = document.getElementById('manualResultContent');
+    resultBox.style.display = 'block';
+    resultContent.innerHTML = '生成中...';
 
-            try {
-                const res = await fetch('/api/admin_create_link', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        emails: emails,
-                        type: type,
-                        days: days
-                    })
-                });
-                const data = await res.json();
+    try {
+        const res = await fetch('/api/admin_create_link', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                emails: emails,
+                type: type,
+                days: days
+            })
+        });
+        const data = await res.json();
 
-                if (data.error) {
-                    resultContent.innerHTML = '<div style="color:red;">' + data.error + '</div>';
-                    return;
-                }
-
-                let html = '<div style="font-weight:bold;margin-bottom:10px;">生成成功</div>';
-                html += '<div style="margin-bottom:8px;">邮箱列表：</div>';
-                data.emails.forEach((email, idx) => {
-                    html += '<div class="email-item">' + (idx+1) + '. ' + email + '</div>';
-                });
-                html += '<div class="link-area">查询链接：<span style="color:#667eea;">' + data.link_url + '</span>';
-                html += '<button class="copy-btn" onclick="copyText(\'' + data.link_url + '\')">复制链接</button></div>';
-                html += '<div style="margin-top:8px;color:#999;font-size:13px;">有效期至：' + data.expire_at + '</div>';
-                html += '<button onclick="alert(\'邮箱：' + data.emails.join('、') + '\\n查询链接：' + data.link_url + '\')" style="margin-top:12px;padding:8px 20px;background:#667eea;color:white;border:none;border-radius:6px;cursor:pointer;font-size:13px;">复制全部</button>';
-
-                resultContent.innerHTML = html;
-                location.reload();
-
-            } catch (e) {
-                resultContent.innerHTML = '<div style="color:red;">请求失败：' + e.message + '</div>';
-            }
+        if (data.error) {
+            resultContent.innerHTML = '<div style="color:red;">' + data.error + '</div>';
+            return;
         }
 
-        async function disableLink(linkId) {
-            if (!confirm('确定要失效该链接吗？')) return;
-            
-            try {
-                const res = await fetch('/api/disable_link', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({link_id: linkId})
-                });
-                const data = await res.json();
-                if (data.success) {
-                    alert('链接已失效');
-                    location.reload();
-                } else {
-                    alert('操作失败：' + data.error);
-                }
-            } catch (e) {
-                alert('请求失败');
-            }
-        }
+        let html = '<div style="font-weight:bold;margin-bottom:10px;">生成成功</div>';
+        html += '<div style="margin-bottom:8px;">邮箱列表：</div>';
+        data.emails.forEach(function(email, idx) {
+            html += '<div class="email-item">' + (idx+1) + '. ' + email + '</div>';
+        });
+        html += '<div class="link-area">查询链接：<span style="color:#667eea;">' + data.link_url + '</span>';
+        html += '<button class="copy-btn" onclick="copyText(\'' + data.link_url + '\')">复制链接</button></div>';
+        html += '<div style="margin-top:8px;color:#999;font-size:13px;">有效期至：' + data.expire_at + '</div>';
+        html += '<button onclick="alert(\'邮箱：' + data.emails.join('、') + '\\n查询链接：' + data.link_url + '\')" style="margin-top:12px;padding:8px 20px;background:#667eea;color:white;border:none;border-radius:6px;cursor:pointer;font-size:13px;">复制全部</button>';
 
+        resultContent.innerHTML = html;
+        location.reload();
+
+    } catch (e) {
+        resultContent.innerHTML = '<div style="color:red;">请求失败：' + e.message + '</div>';
+    }
+}
         async function disableLinkByInput() {
             const linkId = document.getElementById('disableLinkInput').value.trim();
             if (!linkId) {

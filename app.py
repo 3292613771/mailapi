@@ -185,20 +185,9 @@ def get_latest_mails(email_addr, limit=1):
         all_mail_ids = []
         folder_info = []
         
-        # 读取收件箱
-        try:
-            mail.select("INBOX")
-            status, data = mail.search(None, "ALL")
-            if data[0]:
-                for mid in data[0].split():
-                    all_mail_ids.append(mid)
-                    folder_info.append("INBOX")
-        except Exception as e:
-            print(f"读取收件箱失败: {e}")
-        
-        # 读取垃圾箱
-        spam_folders = ["垃圾箱", "广告邮件", "[Gmail]/Spam", "Spam", "Junk", "Junk Email"]
-        for folder in spam_folders:
+        # 读取收件箱、垃圾箱、广告邮件
+        folders_to_read = ["INBOX", "垃圾箱", "广告邮件"]
+        for folder in folders_to_read:
             try:
                 mail.select(folder)
                 status, data = mail.search(None, "ALL")
@@ -206,9 +195,8 @@ def get_latest_mails(email_addr, limit=1):
                     for mid in data[0].split():
                         all_mail_ids.append(mid)
                         folder_info.append(folder)
-                break
-            except:
-                continue
+            except Exception as e:
+                print(f"读取 {folder} 失败: {e}")
         
         if not all_mail_ids:
             return []
@@ -257,7 +245,8 @@ def get_latest_mails(email_addr, limit=1):
                             'sender': sender,
                             'subject': subject,
                             'content': content,
-                            'time': send_time
+                            'time': send_time,
+                            'folder': folder
                         })
                         break
             except Exception as e:
@@ -389,7 +378,7 @@ def logout():
     session.clear()
     return redirect('/login')
 
-# ===== 查看完整邮件（含HTML） =====
+# ===== 查看完整邮件 =====
 @app.route('/view_raw')
 def view_raw():
     link_id = request.args.get('link_id')
@@ -446,7 +435,6 @@ def view_raw():
                 if not html_content:
                     html_content = "<pre>" + get_mail_content(msg) + "</pre>"
                 
-                # 转义引号以防破坏iframe
                 html_content = html_content.replace('"', '&quot;').replace("'", '&#39;')
                 
                 mail.close()
@@ -465,7 +453,6 @@ def view_raw():
                         .header .info {{ color: #666; font-size: 13px; margin-top: 5px; }}
                         iframe {{ width: 100%; min-height: 800px; border: none; background: white; }}
                         .back {{ display: inline-block; margin: 15px 20px; color: #667eea; text-decoration: none; }}
-                        .back:hover {{ text-decoration: underline; }}
                     </style>
                 </head>
                 <body>
@@ -848,7 +835,6 @@ def query_page():
     
     link_data = links[link_id]
     
-    # 检查是否已失效
     if link_data.get('status') == 'disabled':
         return "链接已失效"
     
@@ -861,38 +847,20 @@ def query_page():
     if link_data['status'] != 'active':
         return "链接已被禁用"
     
-    emails = link_data['emails']
-    mail_list_html = ""
-    for email in emails:
-        auth_code = ACCOUNTS.get(email)
-        if not auth_code:
-            continue
-        result = get_latest_mails(email, limit=1)
-        if result and not isinstance(result, dict):
-            mail = result[0]
-            mail_list_html += f"""
-            <div style="border-bottom:1px solid #ddd;padding:10px;">
-                <b>{mail['sender']}</b> <span style="color:#999;font-size:12px;">{mail.get('time', '')}</span><br>
-                <span style="color:#666;">{mail['subject']}</span><br>
-                <span style="font-size:14px;">{mail['content'][:200]}</span>
-                <br>
-                <a href="/view_raw?link_id={link_id}&mail_id={mail['mail_id']}" target="_blank" style="color:#667eea;font-size:13px;">查看完整邮件</a>
-            </div>
-            """
-    
-    if not mail_list_html:
-        mail_list_html = "<div style='padding:20px;color:#999;'>暂无邮件</div>"
-    
     html_content = f'''
     <!DOCTYPE html>
     <html>
     <head><meta charset="UTF-8"><title>邮箱查询系统</title></head>
-    <body style="font-family: Arial, sans-serif; max-width: 700px; margin: 50px auto; padding: 20px;">
+    <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px;">
         <div style="background: white; padding: 30px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
             <h2>邮箱查询系统</h2>
+            <p>输入已绑定的邮箱，查看最新邮件</p>
             <p style="color: #999; font-size: 13px;">有效期至：{link_data['expire_at']}</p>
-            <hr>
-            {mail_list_html}
+            <form action="/api/query_mail" method="post">
+                <input type="hidden" name="link_id" value="{link_id}">
+                <input type="text" name="email" placeholder="请输入邮箱地址" style="width:100%;padding:12px;font-size:16px;margin:10px 0;border:2px solid #ddd;border-radius:8px;">
+                <button type="submit" style="width:100%;padding:12px;background:#4CAF50;color:white;border:none;font-size:16px;cursor:pointer;border-radius:8px;">查询邮件</button>
+            </form>
         </div>
     </body>
     </html>
@@ -911,7 +879,6 @@ def query_mail():
     if '@' not in email:
         email = email + "@qq.com"
     
-    # 验证链接
     links = load_links()
     if link_id not in links:
         return "链接无效"
@@ -920,11 +887,9 @@ def query_mail():
     if email not in link_data['emails']:
         return f"该邮箱不在本链接中，可查询的邮箱：{', '.join(link_data['emails'])}"
     
-    # 检查是否已失效
     if link_data.get('status') == 'disabled':
         return "链接已失效"
     
-    # ===== 使用老系统的查询逻辑，limit=1 =====
     if email not in ACCOUNTS:
         return f"邮箱 {email} 未绑定"
     

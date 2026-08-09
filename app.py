@@ -20,7 +20,7 @@ LINKS_FILE = "links.json"
 USED_EMAILS_FILE = "used_emails.json"
 ADMIN_PASSWORD = "060910"
 DEFAULT_DAYS = 30
-DOMAIN = "mailauto.zeabur.app"
+DOMAIN = "mail-auto.zeabur.app"
 
 # ===== 读取邮箱 =====
 def load_accounts():
@@ -279,8 +279,7 @@ def admin():
             }});
             const data = await res.json();
             if(data.error) return alert(data.error);
-            document.getElementById("result").innerHTML = "生成成功！链接：" + data.link_url;
-            location.reload();
+            document.getElementById("result").innerHTML = "生成成功！<br>链接：<a href=\\"" + data.link_url + "\\" target=\\"_blank\\">" + data.link_url + "</a><br>有效期至：" + data.expire_at;
         }}
         async function disableLink(id) {{
             if(!id) id = document.getElementById("disable_input").value.trim();
@@ -353,8 +352,10 @@ def query_page():
         return "链接已失效"
     if datetime.now() > datetime.strptime(data['expire_at'], "%Y-%m-%d %H:%M:%S"):
         return "链接已过期"
+    
     emails = data['emails']
-    html_content = f'<h2>邮箱查询</h2><p>有效期至：{data["expire_at"]}</p>'
+    html_content = f'<h2>邮箱查询</h2><p>链接ID：{link_id}</p><p>有效期至：{data["expire_at"]}</p><hr>'
+    
     for email in emails:
         result = get_latest_mails(email, 1)
         if isinstance(result, dict) and 'error' in result:

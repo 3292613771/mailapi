@@ -656,7 +656,7 @@ def admin():
                 html += '<div class="link-area">查询链接：<span style="color:#667eea;">' + data.link_url + '</span>';
                 html += '<button class="copy-btn" onclick="copyText(\'' + data.link_url + '\')">复制链接</button></div>';
                 html += '<div style="margin-top:8px;color:#999;font-size:13px;">有效期至：' + data.expire_at + '</div>';
-                html += '<button onclick="copyAll(\'' + data.emails.join(',') + '\', \'' + data.link_url + '\')" style="margin-top:12px;padding:8px 20px;background:#667eea;color:white;border:none;border-radius:6px;cursor:pointer;font-size:13px;">复制全部</button>';
+                html += '<button onclick="alert(\'邮箱：' + data.emails.join('、') + '\\n查询链接：' + data.link_url + '\')" style="margin-top:12px;padding:8px 20px;background:#667eea;color:white;border:none;border-radius:6px;cursor:pointer;font-size:13px;">复制全部</button>';
 
                 resultContent.innerHTML = html;
                 location.reload();

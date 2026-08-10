@@ -542,6 +542,49 @@ def admin():
     """
     return render_template_string(html)
 
+
+def gen_success_html(link_url, emails, expire_at):
+    """生成链接成功后的结果页面（仿图二样式）"""
+    emails_lines = "
+".join([f'<div>邮箱：{e}</div>' for e in emails])
+    return f"""
+    <!DOCTYPE html>
+    <html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>链接管理后台</title>
+        <style>
+            * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+            body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background: #f5f5f5; color: #333; line-height: 1.8; padding: 40px 20px; }}
+            .container {{ max-width: 600px; margin: 0 auto; background: #fff; border-radius: 12px; padding: 32px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); }}
+            .header {{ display: flex; align-items: center; margin-bottom: 24px; }}
+            .header-icon {{ width: 36px; height: 36px; background: #667eea; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 18px; margin-right: 12px; }}
+            .header h1 {{ font-size: 22px; color: #1a1a2e; font-weight: 600; }}
+            .success-msg {{ font-size: 16px; color: #28a745; margin-bottom: 16px; font-weight: 500; }}
+            .info-row {{ margin-bottom: 10px; font-size: 15px; color: #555; }}
+            .info-row a {{ color: #667eea; text-decoration: none; word-break: break-all; }}
+            .info-row a:hover {{ text-decoration: underline; }}
+            .back-btn {{ display: inline-block; margin-top: 20px; padding: 10px 24px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; text-decoration: none; border-radius: 8px; font-size: 14px; }}
+            .back-btn:hover {{ opacity: 0.9; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <div class="header-icon">!</div>
+                <h1>链接管理后台</h1>
+            </div>
+            <div class="success-msg">生成成功！</div>
+            <div class="info-row">链接：<a href="{link_url}" target="_blank">{link_url}</a></div>
+            {emails_lines}
+            <div class="info-row">有效期：{expire_at}</div>
+            <a href="{{ url_for('admin') }}" class="back-btn">返回后台</a>
+        </div>
+    </body>
+    </html>
+    """
+
 @app.route("/admin/create_link", methods=["GET", "POST"])
 @admin_required
 def create_link_page():
@@ -572,11 +615,8 @@ def create_link_page():
             selected = random.sample(candidates, quantity)
             link_id = create_link(selected, days, buyer_id)
             link_url = f"https://{DOMAIN}/query?link={link_id}"
-
-            # 显示链接 + 可查询的邮箱号列表
-            emails_html = "<br>".join(selected)
-            flash(f"链接: {link_url}<br><br>可查询邮箱:<br>{emails_html}", "success")
-            return redirect(url_for("create_link_page"))
+            expire_at = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+            return render_template_string(gen_success_html(link_url, selected, expire_at))
 
         elif action == "by_emails":
             emails_text = request.form.get("emails", "")
@@ -595,10 +635,8 @@ def create_link_page():
 
             link_id = create_link(emails, days)
             link_url = f"https://{DOMAIN}/query?link={link_id}"
-
-            emails_html = "<br>".join(emails)
-            flash(f"链接: {link_url}<br><br>可查询邮箱:<br>{emails_html}", "success")
-            return redirect(url_for("create_link_page"))
+            expire_at = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+            return render_template_string(gen_success_html(link_url, emails, expire_at))
 
     type_stats = {}
     for t in ["数字", "英文", "foxmail"]:

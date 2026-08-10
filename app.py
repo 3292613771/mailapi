@@ -11,19 +11,16 @@ from functools import wraps
 
 from flask import Flask, request, render_template_string, redirect, url_for, session, flash
 
-# 设置时区为北京时间
 os.environ["TZ"] = "Asia/Shanghai"
 
 app = Flask(__name__)
-app.secret_key = "mailauto-secret-key-2026-v1"
+app.secret_key = "mail-auto-secret-key-2026-v1"
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=2)
 
-# ============ 配置 ============
 ADMIN_PASSWORD = "060910"
 DOMAIN = "mailauto.zeabur.app"
 PORT = int(os.environ.get("PORT", 8080))
 
-# 数据目录（Zeabur Volume 挂载 /app）
 DATA_DIR = "/app"
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -32,7 +29,6 @@ LINKS_FILE = os.path.join(DATA_DIR, "links.json")
 BACKUP_FILE = os.path.join(DATA_DIR, "links_backup.json")
 USED_EMAILS_FILE = os.path.join(DATA_DIR, "used_emails.json")
 
-# ============ 工具函数 ============
 
 def load_json(filepath, default=None):
     if default is None:
@@ -45,24 +41,18 @@ def load_json(filepath, default=None):
     except Exception:
         return default
 
+
 def save_json(filepath, data):
     with open(filepath, "w", encoding="utf-8") as fh:
         json.dump(data, fh, ensure_ascii=False, indent=2)
 
+
 def save_links(data):
-    """保存链接数据并自动备份"""
     save_json(LINKS_FILE, data)
     save_json(BACKUP_FILE, data)
 
-# ============ 邮箱账号管理 ============
 
 def parse_accounts():
-    """
-    解析 accounts.txt
-    格式一: 邮箱1 邮箱2 邮箱3 授权码
-    格式二: 邮箱----授权码
-    返回: {邮箱: 授权码}
-    """
     accounts = {}
     if not os.path.exists(ACCOUNTS_FILE):
         return accounts
@@ -88,8 +78,8 @@ def parse_accounts():
                             accounts[email_addr] = auth_code
     return accounts
 
+
 def get_email_type(email_addr):
-    """识别邮箱类型: 数字/英文/foxmail"""
     if "@foxmail.com" in email_addr.lower():
         return "foxmail"
     local_part = email_addr.split("@")[0] if "@" in email_addr else email_addr
@@ -97,8 +87,8 @@ def get_email_type(email_addr):
         return "数字"
     return "英文"
 
+
 def get_emails_by_type(email_type):
-    """按类型获取所有邮箱"""
     accounts = parse_accounts()
     result = {}
     for email_addr, auth_code in accounts.items():
@@ -106,8 +96,8 @@ def get_emails_by_type(email_type):
             result[email_addr] = auth_code
     return result
 
+
 def get_assigned_emails():
-    """获取已分配的邮箱（所有有效链接中的邮箱，去重）"""
     links = get_links()
     assigned = set()
     for link_data in links.values():
@@ -116,22 +106,24 @@ def get_assigned_emails():
                 assigned.add(e)
     return assigned
 
+
 def get_available_emails_by_type(email_type):
-    """获取某类型下可用的邮箱（未被分配到有效链接中）"""
     all_emails = get_emails_by_type(email_type)
     assigned = get_assigned_emails()
     return {k: v for k, v in all_emails.items() if k not in assigned}
 
-# ============ 链接管理 ============
 
 def get_links():
     return load_json(LINKS_FILE, {})
 
+
 def get_used_emails():
     return load_json(USED_EMAILS_FILE, {})
 
+
 def generate_link_id():
     return secrets.token_urlsafe(16)
+
 
 def create_link(emails, days, buyer_id=None):
     links = get_links()
@@ -161,6 +153,7 @@ def create_link(emails, days, buyer_id=None):
 
     return link_id
 
+
 def invalidate_link(link_id):
     links = get_links()
     if link_id in links:
@@ -169,9 +162,11 @@ def invalidate_link(link_id):
         return True
     return False
 
+
 def get_link(link_id):
     links = get_links()
     return links.get(link_id)
+
 
 def is_link_valid(link_data):
     if not link_data:
@@ -188,7 +183,6 @@ def is_link_valid(link_data):
             pass
     return True
 
-# ============ IMAP 邮件读取 ============
 
 def decode_str(s):
     if not s:
@@ -205,8 +199,8 @@ def decode_str(s):
     except Exception:
         return str(s)
 
+
 def get_email_body(msg):
-    """提取邮件正文（优先HTML，其次纯文本）"""
     body_html = ""
     body_text = ""
 
@@ -238,9 +232,10 @@ def get_email_body(msg):
                 else:
                     body_text = text
         except Exception:
-            pass
+                pass
 
     return body_html if body_html else body_text
+
 
 def get_ad_folders(mail):
     ad_folders = []
@@ -258,8 +253,8 @@ def get_ad_folders(mail):
         pass
     return ad_folders
 
+
 def fetch_latest_email(email_addr, auth_code):
-    """从收件箱、垃圾箱、广告邮件获取最新1封邮件"""
     folders = ["INBOX", "Junk"]
 
     try:
@@ -331,59 +326,33 @@ def fetch_latest_email(email_addr, auth_code):
         return None
     return all_emails[0]
 
-# ============ HTML 安全清理（用于完整邮件显示） ============
 
 def sanitize_email_html(html_content):
-    """
-    清理邮件HTML，移除危险内容但保留样式、图片、链接
-    目标是"一比一复刻"QQ邮箱app的显示效果
-    """
     if not html_content:
         return ""
 
-    # 1. 移除 script 标签及其内容
     html_content = re.sub(r'<script[^>]*>.*?</script>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
     html_content = re.sub(r'<script[^>]*/?>', '', html_content, flags=re.IGNORECASE)
-
-    # 2. 移除 noscript 标签
     html_content = re.sub(r'<noscript[^>]*>.*?</noscript>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
-
-    # 3. 移除 iframe
     html_content = re.sub(r'<iframe[^>]*>.*?</iframe>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
-
-    # 4. 移除 object/embed
     html_content = re.sub(r'<(object|embed)[^>]*>.*?</\1>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
-
-    # 5. 移除 form 标签（防止提交到外部）
     html_content = re.sub(r'<form[^>]*>', '<div>', html_content, flags=re.IGNORECASE)
     html_content = re.sub(r'</form>', '</div>', html_content, flags=re.IGNORECASE)
-
-    # 6. 移除 input/button/textarea/select 等表单元素
     html_content = re.sub(r'<(input|button|textarea|select|option)[^>]*>', '', html_content, flags=re.IGNORECASE)
     html_content = re.sub(r'</(textarea|select)>', '', html_content, flags=re.IGNORECASE)
-
-    # 7. 移除 onxxx 事件处理器
     html_content = re.sub(r'\son\w+\s*=\s*"[^"]*"', '', html_content, flags=re.IGNORECASE)
     html_content = re.sub(r"\son\w+\s*=\s*'[^']*'", '', html_content, flags=re.IGNORECASE)
     html_content = re.sub(r'\son\w+\s*=\s*[^\s>]+', '', html_content, flags=re.IGNORECASE)
-
-    # 8. 移除 javascript: 伪协议
     html_content = re.sub(r'javascript:', '', html_content, flags=re.IGNORECASE)
-
-    # 9. 移除 meta refresh
     html_content = re.sub(r'<meta[^>]*http-equiv\s*=\s*["\']?refresh["\']?[^>]*>', '', html_content, flags=re.IGNORECASE)
 
-    # 10. 给所有 a 标签添加 target="_blank"（在新窗口打开链接）
-    # 先处理已有 target 的
     html_content = re.sub(r'<a\s+([^>]*?)target\s*=\s*["\'][^"\']*["\']([^>]*?)>',
                           r'<a \1target="_blank"\2>', html_content, flags=re.IGNORECASE)
-    # 再处理没有 target 的
     html_content = re.sub(r'<a\s+(?!.*?target=)([^>]+)>',
                           r'<a \1 target="_blank">', html_content, flags=re.IGNORECASE)
 
     return html_content
 
-# ============ 登录装饰器 ============
 
 def admin_required(f):
     @wraps(f)
@@ -393,7 +362,7 @@ def admin_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
-# ============ 公共样式 ============
+
 COMMON_CSS = """
 <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -445,6 +414,9 @@ COMMON_CSS = """
     .tab { display: flex; border-bottom: 2px solid #eee; margin-bottom: 24px; }
     .tab-item { padding: 12px 24px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; font-size: 14px; color: #666; background: none; }
     .tab-item.active { border-bottom-color: #667eea; color: #667eea; font-weight: 600; }
+    .email-list { background: #f8f9fa; padding: 12px 16px; border-radius: 8px; margin-top: 12px; font-family: monospace; font-size: 13px; line-height: 2; }
+    .email-list div { border-bottom: 1px dashed #ddd; padding: 2px 0; }
+    .email-list div:last-child { border-bottom: none; }
     @media (max-width: 768px) {
         .grid-2, .grid-3, .stats { grid-template-columns: 1fr; }
         .nav-inner { flex-wrap: wrap; }
@@ -452,7 +424,6 @@ COMMON_CSS = """
 </style>
 """
 
-# ============ 路由 ============
 
 @app.route("/")
 def index():
@@ -496,10 +467,12 @@ def login():
     """
     return render_template_string(html)
 
+
 @app.route("/logout")
 def logout():
     session.pop("admin_logged_in", None)
     return redirect(url_for("login"))
+
 
 @app.route("/admin")
 @admin_required
@@ -600,7 +573,9 @@ def create_link_page():
             link_id = create_link(selected, days, buyer_id)
             link_url = f"https://{DOMAIN}/query?link={link_id}"
 
-            flash(f"{link_url}", "success")
+            # 显示链接 + 可查询的邮箱号列表
+            emails_html = "<br>".join(selected)
+            flash(f"链接: {link_url}<br><br>可查询邮箱:<br>{emails_html}", "success")
             return redirect(url_for("create_link_page"))
 
         elif action == "by_emails":
@@ -621,7 +596,8 @@ def create_link_page():
             link_id = create_link(emails, days)
             link_url = f"https://{DOMAIN}/query?link={link_id}"
 
-            flash(f"{link_url}", "success")
+            emails_html = "<br>".join(emails)
+            flash(f"链接: {link_url}<br><br>可查询邮箱:<br>{emails_html}", "success")
             return redirect(url_for("create_link_page"))
 
     type_stats = {}
@@ -726,6 +702,7 @@ def create_link_page():
     """
     return render_template_string(html)
 
+
 @app.route("/admin/links")
 @admin_required
 def links_list():
@@ -814,6 +791,7 @@ def links_list():
     """
     return render_template_string(html)
 
+
 @app.route("/admin/invalidate_link", methods=["POST"])
 @admin_required
 def invalidate_link_route():
@@ -823,6 +801,7 @@ def invalidate_link_route():
     else:
         flash("链接不存在", "error")
     return redirect(url_for("links_list"))
+
 
 @app.route("/admin/invalidate_by_id", methods=["GET", "POST"])
 @admin_required
@@ -882,7 +861,7 @@ def invalidate_by_id_page():
     """
     return render_template_string(html)
 
-# ============ 用户查询（新：输入邮箱号查询） ============
+# ============ 用户查询（输入邮箱号后直接跳转完整邮件） ============
 
 @app.route("/query", methods=["GET", "POST"])
 def query():
@@ -900,7 +879,6 @@ def query():
     allowed_emails = link_data.get("emails", [])
     expire_at = link_data.get("expire_at", "")
 
-    # POST: 用户输入了邮箱号，查询该邮箱
     if request.method == "POST":
         email_addr = request.form.get("email", "").strip()
 
@@ -910,25 +888,13 @@ def query():
         if email_addr not in allowed_emails:
             return render_template_string(query_input_html(link_id, expire_at, "该邮箱不在此链接的查询范围内"), 403)
 
-        # 查询该邮箱的最新邮件
-        accounts = parse_accounts()
-        auth_code = accounts.get(email_addr, "")
-        if not auth_code:
-            return render_template_string(query_input_html(link_id, expire_at, "邮箱配置错误，无法读取"), 500)
+        # 直接跳转到完整邮件页面，不再显示预览
+        return redirect(f"/query/email_detail?link={link_id}&email={email_addr}")
 
-        mail_info = fetch_latest_email(email_addr, auth_code)
-        if not mail_info:
-            return render_template_string(query_input_html(link_id, expire_at, "该邮箱暂无邮件或读取失败"), 404)
-
-        # 显示邮件预览
-        return render_template_string(query_result_html(link_id, email_addr, expire_at, mail_info))
-
-    # GET: 显示输入框
     return render_template_string(query_input_html(link_id, expire_at))
 
 
 def query_input_html(link_id, expire_at, error_msg=""):
-    """查询输入页面"""
     error_html = f'<div style="background:#f8d7da;color:#721c24;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-size:14px;">{error_msg}</div>' if error_msg else ""
     return f"""
     <!DOCTYPE html>
@@ -966,10 +932,10 @@ def query_input_html(link_id, expire_at, error_msg=""):
                         <label>请输入要查询的邮箱号</label>
                         <input type="text" name="email" placeholder="例如: 123456@qq.com" required>
                     </div>
-                    <button type="submit">查询邮件</button>
+                    <button type="submit">查看完整邮件</button>
                 </form>
                 <div class="tips">
-                    <strong>提示:</strong> 请输入您购买的完整邮箱地址进行查询，系统会显示该邮箱的最新一封邮件预览。
+                    <strong>提示:</strong> 请输入您购买的完整邮箱地址，系统将直接显示该邮箱的最新一封完整邮件内容。
                 </div>
             </div>
             <div class="footer">mailauto.zeabur.app</div>
@@ -979,62 +945,8 @@ def query_input_html(link_id, expire_at, error_msg=""):
     """
 
 
-def query_result_html(link_id, email_addr, expire_at, mail_info):
-    """邮件预览结果页面"""
-    preview = mail_info.get("preview", "")
-    subject = mail_info.get("subject", "（无主题）")
-    from_ = mail_info.get("from", "未知")
-    date_ = mail_info.get("date", "")
-    return f"""
-    <!DOCTYPE html>
-    <html lang="zh-CN">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>邮件预览 - {email_addr}</title>
-        <style>
-            * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-            body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; background: #f0f2f5; color: #333; line-height: 1.6; }}
-            .container {{ max-width: 800px; margin: 0 auto; padding: 20px; }}
-            .card {{ background: #fff; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); padding: 24px; margin-bottom: 16px; }}
-            h1 {{ font-size: 20px; margin-bottom: 6px; color: #1a1a2e; }}
-            .expire-info {{ color: #e74c3c; font-size: 13px; margin-bottom: 20px; }}
-            .email-tag {{ display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; padding: 4px 12px; border-radius: 20px; font-size: 13px; margin-bottom: 16px; }}
-            .mail-field {{ margin-bottom: 10px; font-size: 14px; color: #555; }}
-            .mail-field strong {{ color: #333; display: inline-block; width: 60px; }}
-            .preview-box {{ background: #f8f9fa; padding: 16px; border-radius: 8px; margin-top: 16px; font-size: 14px; color: #555; line-height: 1.8; border-left: 3px solid #667eea; }}
-            .btn-full {{ display: inline-block; margin-top: 20px; padding: 12px 24px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 500; }}
-            .btn-full:hover {{ opacity: 0.95; }}
-            .btn-back {{ display: inline-block; margin-top: 20px; margin-left: 10px; padding: 12px 24px; background: #95a5a6; color: #fff; text-decoration: none; border-radius: 8px; font-size: 14px; }}
-            .btn-back:hover {{ background: #7f8c8d; }}
-            .footer {{ text-align: center; color: #aaa; font-size: 12px; margin-top: 30px; }}
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <div class="card">
-                <h1>邮件预览</h1>
-                <p class="expire-info">有效期至: {expire_at} (北京时间)</p>
-                <span class="email-tag">{email_addr}</span>
-                <div class="mail-field"><strong>发件人:</strong> {from_}</div>
-                <div class="mail-field"><strong>主题:</strong> {subject}</div>
-                <div class="mail-field"><strong>时间:</strong> {date_}</div>
-                <div class="preview-box">{preview}</div>
-                <a href="/query/email_detail?link={link_id}&email={email_addr}" target="_blank" class="btn-full">查看完整邮件</a>
-                <a href="/query?link={link_id}" class="btn-back">返回查询</a>
-            </div>
-            <div class="footer">mailauto.zeabur.app</div>
-        </div>
-    </body>
-    </html>
-    """
-
 @app.route("/query/email_detail")
 def email_detail():
-    """
-    查看完整邮件 - 一比一复刻QQ邮箱app显示效果
-    直接渲染清理后的邮件HTML，保留所有样式、图片、可点击链接
-    """
     link_id = request.args.get("link", "")
     email_addr = request.args.get("email", "")
 
@@ -1054,21 +966,17 @@ def email_detail():
     if not mail_info:
         return "<h1>暂无邮件</h1>", 404
 
-    # 获取原始HTML并清理
     body_html = mail_info.get("body_html", "")
     if not body_html.strip():
-        # 如果是纯文本，包装成HTML
         body_text = mail_info.get("preview", "")
         body_html = f'<pre style="white-space:pre-wrap;word-wrap:break-word;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica Neue,Arial,sans-serif;line-height:1.8;color:#333;">{body_text}</pre>'
 
-    # 清理邮件HTML，保留样式和链接
     safe_html = sanitize_email_html(body_html)
 
     subject = mail_info.get("subject", "（无主题）")
     from_ = mail_info.get("from", "未知")
     date_ = mail_info.get("date", "")
 
-    # 直接输出邮件HTML，一比一复刻
     html = f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -1084,7 +992,6 @@ def email_detail():
         .mail-header .back-btn {{ display: inline-block; margin-bottom: 10px; color: #667eea; text-decoration: none; font-size: 14px; }}
         .mail-header .back-btn:hover {{ text-decoration: underline; }}
         .mail-body {{ background: #fff; padding: 20px; min-height: calc(100vh - 120px); }}
-        /* 确保邮件内容不被外部样式干扰 */
         .mail-body > * {{ max-width: 100%; }}
         .mail-body img {{ max-width: 100%; height: auto; }}
         .mail-body table {{ max-width: 100%; }}
@@ -1108,7 +1015,6 @@ def email_detail():
 </body>
 </html>"""
     return html
-
 
 # ============ 自动发货 API ============
 
@@ -1148,6 +1054,7 @@ def api_auto_create_link():
     link_url = f"https://{DOMAIN}/query?link={link_id}"
 
     return link_url
+
 
 # ============ 启动 ============
 

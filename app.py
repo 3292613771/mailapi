@@ -14,7 +14,7 @@ from flask import Flask, request, render_template_string, redirect, url_for, ses
 os.environ["TZ"] = "Asia/Shanghai"
 
 app = Flask(__name__)
-app.secret_key = "mail-auto-secret-key-2026-v1"
+app.secret_key = "mailauto-secret-key-2026-v1"
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=2)
 
 ADMIN_PASSWORD = "060910"
@@ -545,8 +545,7 @@ def admin():
 
 def gen_success_html(link_url, emails, expire_at):
     """生成链接成功后的结果页面（仿图二样式）"""
-    emails_lines = "
-".join([f'<div>邮箱：{e}</div>' for e in emails])
+    emails_lines = "\n".join([f'<div>邮箱：{e}</div>' for e in emails])
     return f"""
     <!DOCTYPE html>
     <html lang="zh-CN">

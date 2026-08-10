@@ -14,7 +14,7 @@ from flask import Flask, request, render_template_string, redirect, url_for, ses
 os.environ["TZ"] = "Asia/Shanghai"
 
 app = Flask(__name__)
-app.secret_key = "mailauto-secret-key-2026-v1"
+app.secret_key = "mail-auto-secret-key-2026-v1"
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=2)
 
 ADMIN_PASSWORD = "060910"
@@ -544,9 +544,11 @@ def admin():
 
 
 def gen_success_html(link_url, emails, expire_at):
-    """生成链接成功后的结果页面（仿图二样式）"""
-    emails_lines = "\n".join([f'<div>邮箱：{e}</div>' for e in emails])
-    return f"""
+    """生成链接成功后的结果页面"""
+    emails_lines = ""
+    for e in emails:
+        emails_lines += "<div>邮箱：" + e + "</div>"
+    html = """
     <!DOCTYPE html>
     <html lang="zh-CN">
     <head>
@@ -554,18 +556,18 @@ def gen_success_html(link_url, emails, expire_at):
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>链接管理后台</title>
         <style>
-            * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-            body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background: #f5f5f5; color: #333; line-height: 1.8; padding: 40px 20px; }}
-            .container {{ max-width: 600px; margin: 0 auto; background: #fff; border-radius: 12px; padding: 32px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); }}
-            .header {{ display: flex; align-items: center; margin-bottom: 24px; }}
-            .header-icon {{ width: 36px; height: 36px; background: #667eea; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 18px; margin-right: 12px; }}
-            .header h1 {{ font-size: 22px; color: #1a1a2e; font-weight: 600; }}
-            .success-msg {{ font-size: 16px; color: #28a745; margin-bottom: 16px; font-weight: 500; }}
-            .info-row {{ margin-bottom: 10px; font-size: 15px; color: #555; }}
-            .info-row a {{ color: #667eea; text-decoration: none; word-break: break-all; }}
-            .info-row a:hover {{ text-decoration: underline; }}
-            .back-btn {{ display: inline-block; margin-top: 20px; padding: 10px 24px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; text-decoration: none; border-radius: 8px; font-size: 14px; }}
-            .back-btn:hover {{ opacity: 0.9; }}
+            * { box-sizing: border-box; margin: 0; padding: 0; }
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background: #f5f5f5; color: #333; line-height: 1.8; padding: 40px 20px; }
+            .container { max-width: 600px; margin: 0 auto; background: #fff; border-radius: 12px; padding: 32px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); }
+            .header { display: flex; align-items: center; margin-bottom: 24px; }
+            .header-icon { width: 36px; height: 36px; background: #667eea; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 18px; margin-right: 12px; }
+            .header h1 { font-size: 22px; color: #1a1a2e; font-weight: 600; }
+            .success-msg { font-size: 16px; color: #28a745; margin-bottom: 16px; font-weight: 500; }
+            .info-row { margin-bottom: 10px; font-size: 15px; color: #555; }
+            .info-row a { color: #667eea; text-decoration: none; word-break: break-all; }
+            .info-row a:hover { text-decoration: underline; }
+            .back-btn { display: inline-block; margin-top: 20px; padding: 10px 24px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; text-decoration: none; border-radius: 8px; font-size: 14px; }
+            .back-btn:hover { opacity: 0.9; }
         </style>
     </head>
     <body>
@@ -575,14 +577,15 @@ def gen_success_html(link_url, emails, expire_at):
                 <h1>链接管理后台</h1>
             </div>
             <div class="success-msg">生成成功！</div>
-            <div class="info-row">链接：<a href="{link_url}" target="_blank">{link_url}</a></div>
-            {emails_lines}
-            <div class="info-row">有效期：{expire_at}</div>
-            <a href="{{ url_for('admin') }}" class="back-btn">返回后台</a>
+            <div class="info-row">链接：<a href=""" + link_url + """ target="_blank">""" + link_url + """</a></div>
+            """ + emails_lines + """
+            <div class="info-row">有效期：""" + expire_at + """</div>
+            <a href="/admin" class="back-btn">返回后台</a>
         </div>
     </body>
     </html>
     """
+    return html
 
 @app.route("/admin/create_link", methods=["GET", "POST"])
 @admin_required

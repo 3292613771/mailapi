@@ -20,8 +20,8 @@ app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=2)
 
 # ============ 配置 ============
 ADMIN_PASSWORD = "060910"
-DOMAIN = "mailauto.zeabur.app"
-PORT = 8080
+DOMAIN = "mail-auto.zeabur.app"
+PORT = int(os.environ.get("PORT", 8080))
 
 # 数据目录（Zeabur Volume 挂载 /app）
 DATA_DIR = "/app" if os.path.exists("/app") else os.path.dirname(os.path.abspath(__file__))
@@ -425,6 +425,12 @@ COMMON_CSS = """
 """
 
 # ============ 路由 ============
+
+@app.route("/")
+def index():
+    """根路径重定向到后台登录"""
+    return redirect(url_for("login"))
+
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
@@ -1073,4 +1079,10 @@ if __name__ == "__main__":
         if not os.path.exists(f):
             save_json(f, {})
 
+    # Zeabur 通过 PORT 环境变量分配端口
     app.run(host="0.0.0.0", port=PORT, debug=False)
+
+# 生产环境（Gunicorn）入口也会执行到这里，确保数据目录存在
+for f in [LINKS_FILE, BACKUP_FILE, USED_EMAILS_FILE]:
+    if not os.path.exists(f):
+        save_json(f, {})

@@ -15,12 +15,12 @@ from flask import Flask, request, render_template_string, redirect, url_for, ses
 os.environ["TZ"] = "Asia/Shanghai"
 
 app = Flask(__name__)
-app.secret_key = "mail-auto-secret-key-2026-v1"
+app.secret_key = "mailauto-secret-key-2026-v1"
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=2)
 
 # ============ 配置 ============
 ADMIN_PASSWORD = "060910"
-DOMAIN = "mail-auto.zeabur.app"
+DOMAIN = "mailauto.zeabur.app"
 PORT = int(os.environ.get("PORT", 8080))
 
 # 数据目录（Zeabur Volume 挂载 /app）

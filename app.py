@@ -126,10 +126,7 @@ def get_mail_content(msg):
                     content = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL)
                     content = re.sub(r'<[^>]+>', ' ', content)
                     content = html.unescape(content)
-                    content = re.sub(r'[ 	
-
-
-]+', ' ', content)
+                    content = re.sub(r'\s+', ' ', content)
                     content = content.strip()
                     break
         if not content:
@@ -139,7 +136,7 @@ def get_mail_content(msg):
         if match:
             code = match.group(1)+match.group(2)+match.group(3)+match.group(4)+match.group(5)+match.group(6)
         if not code:
-            match = re.search(r'(\d{6})', content)
+            match = re.search(r'\b(\d{6})\b', content)
             if match:
                 code = match.group(1)
         content = content[:1000]
@@ -432,7 +429,6 @@ def admin():
             + '</tr>'
         )
 
-    # JS 代码单独定义，完全不在 f-string 中
     JS_CODE = """
 async function disableLink(linkId) {
     if (!confirm("确定要失效该链接吗？")) return;

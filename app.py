@@ -23,7 +23,7 @@ PORT = int(os.environ.get("PORT", 8080))
 
 # 数据目录：优先从环境变量读取，默认 /data
 # Zeabur 挂载 Volume 到 /data，并设置环境变量 DATA_DIR=/data
-DATA_DIR = os.environ.get("DATA_DIR", "/data")
+DATA_DIR = "/data"
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # accounts.txt 放在代码目录（随代码部署）

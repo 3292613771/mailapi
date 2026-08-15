@@ -26,7 +26,9 @@ PORT = int(os.environ.get("PORT", 8080))
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
-ACCOUNTS_FILE = os.path.join(DATA_DIR, "accounts.txt")
+# accounts.txt 放在代码目录（随代码部署）
+ACCOUNTS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "accounts.txt")
+# 动态数据放在挂载目录
 LINKS_FILE = os.path.join(DATA_DIR, "links.json")
 BACKUP_FILE = os.path.join(DATA_DIR, "links_backup.json")
 
@@ -58,7 +60,14 @@ def save_links(data):
 
 def parse_accounts():
     accounts = {}
+    print(f"[DEBUG] 尝试读取: {ACCOUNTS_FILE}, 存在: {os.path.exists(ACCOUNTS_FILE)}")
     if not os.path.exists(ACCOUNTS_FILE):
+        print(f"[DEBUG] 文件不存在: {ACCOUNTS_FILE}")
+        # 列出代码目录下所有文件，帮助排查
+        code_dir = os.path.dirname(os.path.abspath(__file__))
+        if os.path.exists(code_dir):
+            files = os.listdir(code_dir)
+            print(f"[DEBUG] 代码目录 {code_dir} 内容: {files}")
         return accounts
     with open(ACCOUNTS_FILE, "r", encoding="utf-8") as fh:
         for line in fh:
@@ -80,6 +89,7 @@ def parse_accounts():
                     for email_addr in emails:
                         if email_addr and "@" in email_addr:
                             accounts[email_addr] = auth_code
+    print(f"[DEBUG] 成功解析 {len(accounts)} 个邮箱")
     return accounts
 
 

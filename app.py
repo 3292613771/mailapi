@@ -21,7 +21,9 @@ ADMIN_PASSWORD = "060910"
 DOMAIN = "mailauto.zeabur.app"
 PORT = int(os.environ.get("PORT", 8080))
 
-DATA_DIR = "/app"
+# 数据目录：优先从环境变量读取，默认 /data
+# Zeabur 挂载 Volume 到 /data，并设置环境变量 DATA_DIR=/data
+DATA_DIR = os.environ.get("DATA_DIR", "/data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
 ACCOUNTS_FILE = os.path.join(DATA_DIR, "accounts.txt")
@@ -49,6 +51,9 @@ def save_json(filepath, data):
 def save_links(data):
     save_json(LINKS_FILE, data)
     save_json(BACKUP_FILE, data)
+    # 同时创建带时间戳的备份（保留最近30个）
+    create_timestamp_backup()
+    cleanup_old_backups()
 
 
 def parse_accounts():
@@ -211,6 +216,67 @@ def get_folder_label(folder):
         return "广告邮件", "ad"
 
 
+
+def format_email_time(date_str):
+    """
+    将邮件原始时间格式化为北京时间，风格类似QQ邮箱
+    - 今天 -> 今天 HH:MM
+    - 昨天 -> 昨天 HH:MM
+    - 本周 -> 周X HH:MM
+    - 今年 -> MM-DD HH:MM
+    - 更早 -> YYYY-MM-DD HH:MM
+    """
+    if not date_str:
+        return ""
+
+    try:
+        dt = parsedate_to_datetime(date_str)
+    except Exception:
+        try:
+            dt = datetime.strptime(date_str.strip(), "%a, %d %b %Y %H:%M:%S %z")
+        except Exception:
+            return date_str
+
+    # 统一转换为 offset-naive 的北京时间
+    try:
+        if dt.tzinfo is not None:
+            # 带时区的，先转UTC再+8小时（简化处理）
+            from datetime import timezone
+            utc_dt = dt.astimezone(timezone.utc)
+            dt = utc_dt.replace(tzinfo=None) + timedelta(hours=8)
+        else:
+            # 无时区，假设是UTC，+8小时
+            dt = dt + timedelta(hours=8)
+    except Exception:
+        # 转换失败，去掉时区信息
+        if dt.tzinfo is not None:
+            dt = dt.replace(tzinfo=None)
+
+    # 确保 dt 是 offset-naive
+    if dt.tzinfo is not None:
+        dt = dt.replace(tzinfo=None)
+
+    now = datetime.now()
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    yesterday = today - timedelta(days=1)
+
+    # 判断日期
+    if dt.date() == today.date():
+        return dt.strftime("今天 %H:%M")
+    elif dt.date() == yesterday.date():
+        return dt.strftime("昨天 %H:%M")
+    elif dt.year == today.year:
+        weekday_names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+        days_diff = (today.date() - dt.date()).days
+        if 0 < days_diff < 7:
+            weekday = weekday_names[dt.weekday()]
+            return dt.strftime(f"{weekday} %H:%M")
+        else:
+            return dt.strftime("%m-%d %H:%M")
+    else:
+        return dt.strftime("%Y-%m-%d %H:%M")
+
+
 def fetch_emails(email_addr, auth_code, limit=10):
     folders = ["INBOX", "Junk"]
     try:
@@ -251,12 +317,18 @@ def fetch_emails(email_addr, auth_code, limit=10):
                 msg = email.message_from_bytes(msg_data[0][1])
                 subject = decode_str(msg.get("Subject", "（无主题）"))
                 from_ = decode_str(msg.get("From", "未知"))
-                date_str = msg.get("Date", "")
+                raw_date = msg.get("Date", "")
                 date_dt = None
                 try:
-                    date_dt = parsedate_to_datetime(date_str)
+                    date_dt = parsedate_to_datetime(raw_date)
+                    # 统一转为 offset-naive 用于排序
+                    if date_dt.tzinfo is not None:
+                        from datetime import timezone
+                        utc_dt = date_dt.astimezone(timezone.utc)
+                        date_dt = utc_dt.replace(tzinfo=None) + timedelta(hours=8)
                 except Exception:
                     date_dt = datetime.now()
+                date_str = format_email_time(raw_date)
                 body = get_email_body(msg)
                 preview_text = re.sub(r"<[^>]+>", " ", body)
                 preview_text = re.sub(r"\s+", " ", preview_text).strip()
@@ -278,7 +350,15 @@ def fetch_emails(email_addr, auth_code, limit=10):
                 mail.logout()
             except Exception:
                 pass
+    
+    # 确保所有 date_dt 都是 offset-naive
+    for e in all_emails:
+        if e["date_dt"] is not None and e["date_dt"].tzinfo is not None:
+            from datetime import timezone
+            utc_dt = e["date_dt"].astimezone(timezone.utc)
+            e["date_dt"] = utc_dt.replace(tzinfo=None) + timedelta(hours=8)
     all_emails.sort(key=lambda x: x["date_dt"] or datetime.min, reverse=True)
+
     return all_emails[:limit]
 
 
@@ -445,6 +525,7 @@ def admin():
                     <a href="{{ url_for('total_query_page') }}">总查询</a>
                     <a href="{{ url_for('create_link_page') }}">生成子链接</a>
                     <a href="{{ url_for('links_list') }}">链接列表</a>
+                    <a href="{{ url_for('backup_page') }}">备份管理</a>
                     <a href="{{ url_for('invalidate_by_id_page') }}">失效链接</a>
                 </div>
                 <div>
@@ -482,6 +563,94 @@ def admin():
     return render_template_string(html)
 
 
+
+
+# ============ 备份管理 ============
+
+def get_backup_files():
+    """获取所有备份文件列表"""
+    backups = []
+    if not os.path.exists(DATA_DIR):
+        return backups
+    for fname in sorted(os.listdir(DATA_DIR)):
+        if fname.startswith("links_backup_") and fname.endswith(".json"):
+            fpath = os.path.join(DATA_DIR, fname)
+            try:
+                stat = os.stat(fpath)
+                size = stat.st_size
+                mtime = datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+                backups.append({
+                    "name": fname,
+                    "path": fpath,
+                    "size": f"{size / 1024:.1f} KB" if size > 1024 else f"{size} B",
+                    "time": mtime
+                })
+            except Exception:
+                pass
+    return sorted(backups, key=lambda x: x["time"], reverse=True)
+
+
+def create_timestamp_backup():
+    """创建带时间戳的备份"""
+    if not os.path.exists(LINKS_FILE):
+        return None
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_name = f"links_backup_{timestamp}.json"
+    backup_path = os.path.join(DATA_DIR, backup_name)
+    try:
+        with open(LINKS_FILE, "r", encoding="utf-8") as src:
+            data = src.read()
+        with open(backup_path, "w", encoding="utf-8") as dst:
+            dst.write(data)
+        return backup_name
+    except Exception as e:
+        print(f"[Backup Error] {e}")
+        return None
+
+
+def restore_backup(backup_path):
+    """从备份文件恢复"""
+    try:
+        with open(backup_path, "r", encoding="utf-8") as f:
+            json.load(f)  # 验证JSON有效
+        # 先创建当前状态的备份
+        create_timestamp_backup()
+        # 复制备份到主文件
+        with open(backup_path, "r", encoding="utf-8") as src:
+            data = src.read()
+        with open(LINKS_FILE, "w", encoding="utf-8") as dst:
+            dst.write(data)
+        with open(BACKUP_FILE, "w", encoding="utf-8") as dst:
+            dst.write(data)
+        return True
+    except Exception as e:
+        print(f"[Restore Error] {e}")
+        return False
+
+
+
+def cleanup_old_backups(max_keep=30):
+    """清理旧备份，只保留最近N个"""
+    backups = []
+    if not os.path.exists(DATA_DIR):
+        return
+    for fname in os.listdir(DATA_DIR):
+        if fname.startswith("links_backup_") and fname.endswith(".json"):
+            fpath = os.path.join(DATA_DIR, fname)
+            try:
+                mtime = os.path.getmtime(fpath)
+                backups.append((mtime, fpath))
+            except Exception:
+                pass
+    if len(backups) > max_keep:
+        backups.sort(key=lambda x: x[0], reverse=True)
+        for _, fpath in backups[max_keep:]:
+            try:
+                os.remove(fpath)
+            except Exception:
+                pass
+
+
 # ============ 总查询系统（管理员自用） ============
 
 @app.route("/admin/query", methods=["GET", "POST"])
@@ -492,19 +661,19 @@ def total_query_page():
         limit = int(request.form.get("limit", 10))
 
         if not email_addr:
-            return render_template_string(total_query_input_html("请输入邮箱号"), 400)
+            return render_template_string(total_query_input_html("请输入邮箱号")), 400
 
         accounts = parse_accounts()
         auth_code = accounts.get(email_addr, "")
         if not auth_code:
-            return render_template_string(total_query_input_html("该邮箱不在库存中或配置错误"), 404)
+            return render_template_string(total_query_input_html("该邮箱不在库存中或配置错误")), 404
 
         if limit < 1 or limit > 50:
             limit = 10
 
         emails_data = fetch_emails(email_addr, auth_code, limit)
         if not emails_data:
-            return render_template_string(total_query_input_html("该邮箱暂无邮件或读取失败"), 404)
+            return render_template_string(total_query_input_html("该邮箱暂无邮件或读取失败")), 404
 
         return render_template_string(total_query_result_html(email_addr, emails_data))
 
@@ -548,6 +717,7 @@ def total_query_input_html(error_msg=""):
                     <a href="/admin/query">总查询</a>
                     <a href="/admin/create_link">生成子链接</a>
                     <a href="/admin/links">链接列表</a>
+                    <a href="/admin/backup">备份管理</a>
                     <a href="/admin/invalidate_by_id">失效链接</a>
                 </div>
                 <div>
@@ -663,6 +833,7 @@ def total_query_result_html(email_addr, emails_data):
                     <a href="/admin/query">总查询</a>
                     <a href="/admin/create_link">生成子链接</a>
                     <a href="/admin/links">链接列表</a>
+                    <a href="/admin/backup">备份管理</a>
                     <a href="/admin/invalidate_by_id">失效链接</a>
                 </div>
                 <div>
@@ -788,6 +959,7 @@ def create_link_page():
                     <a href="{{ url_for('total_query_page') }}">总查询</a>
                     <a href="{{ url_for('create_link_page') }}">生成子链接</a>
                     <a href="{{ url_for('links_list') }}">链接列表</a>
+                    <a href="{{ url_for('backup_page') }}">备份管理</a>
                     <a href="{{ url_for('invalidate_by_id_page') }}">失效链接</a>
                 </div>
                 <div>
@@ -879,6 +1051,7 @@ def links_list():
                     <a href="{{ url_for('total_query_page') }}">总查询</a>
                     <a href="{{ url_for('create_link_page') }}">生成子链接</a>
                     <a href="{{ url_for('links_list') }}">链接列表</a>
+                    <a href="{{ url_for('backup_page') }}">备份管理</a>
                     <a href="{{ url_for('invalidate_by_id_page') }}">失效链接</a>
                 </div>
                 <div>
@@ -961,6 +1134,7 @@ def invalidate_by_id_page():
                     <a href="{{ url_for('total_query_page') }}">总查询</a>
                     <a href="{{ url_for('create_link_page') }}">生成子链接</a>
                     <a href="{{ url_for('links_list') }}">链接列表</a>
+                    <a href="{{ url_for('backup_page') }}">备份管理</a>
                     <a href="{{ url_for('invalidate_by_id_page') }}">失效链接</a>
                 </div>
                 <div>
@@ -994,6 +1168,127 @@ def invalidate_by_id_page():
     return render_template_string(html)
 
 
+
+
+@app.route("/admin/backup")
+@admin_required
+def backup_page():
+    backups = get_backup_files()
+    rows = ""
+    for b in backups:
+        rows += f"""
+        <tr>
+            <td>{b['name']}</td>
+            <td>{b['time']}</td>
+            <td>{b['size']}</td>
+            <td>
+                <a href="/admin/backup/download/{b['name']}" class="btn btn-sm btn-primary" style="margin-right:6px">下载</a>
+                <form method="post" action="/admin/backup/restore" style="display:inline">
+                    <input type="hidden" name="backup_name" value="{b['name']}">
+                    <button type="submit" class="btn btn-sm btn-secondary" onclick="return confirm('确定要恢复此备份吗？当前数据将被覆盖。')">恢复</button>
+                </form>
+            </td>
+        </tr>
+        """
+
+    html = """
+    <!DOCTYPE html>
+    <html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8">
+        <title>备份管理</title>
+        """ + COMMON_CSS + """
+    </head>
+    <body>
+        <div class="nav">
+            <div class="nav-inner">
+                <div>
+                    <a href="{{ url_for('admin') }}">后台首页</a>
+                    <a href="{{ url_for('total_query_page') }}">总查询</a>
+                    <a href="{{ url_for('create_link_page') }}">生成子链接</a>
+                    <a href="{{ url_for('links_list') }}">链接列表</a>
+                    <a href="{{ url_for('backup_page') }}">备份管理</a>
+                    <a href="{{ url_for('invalidate_by_id_page') }}">失效链接</a>
+                </div>
+                <div>
+                    <a href="{{ url_for('logout') }}">退出</a>
+                </div>
+            </div>
+        </div>
+        <div class="container">
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    {% for category, message in messages %}
+                        <div class="alert alert-{{ category }}">{{ message }}</div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
+
+            <h1>备份管理</h1>
+            <div class="card">
+                <h2>自动备份说明</h2>
+                <p>每次生成/失效子链接时，系统会自动创建带时间戳的备份文件。</p>
+                <p class="mt-2">主备份文件：<code>links_backup.json</code>（与主文件实时同步）</p>
+                <p class="mt-2">历史备份：自动保留最近 <strong>30</strong> 个时间戳备份。</p>
+            </div>
+            <div class="card">
+                <h2>历史备份列表</h2>
+                """ + ("""
+                <div style="overflow-x:auto">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>文件名</th>
+                            <th>备份时间</th>
+                            <th>大小</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>""" + rows + """</tbody>
+                </table>
+                </div>
+                """ if rows else '<div class="empty-state">暂无历史备份</div>') + """
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    return render_template_string(html)
+
+
+@app.route("/admin/backup/download/<filename>")
+@admin_required
+def download_backup(filename):
+    from flask import send_file
+    safe_name = os.path.basename(filename)
+    if not safe_name.startswith("links_backup_") or not safe_name.endswith(".json"):
+        return "非法文件名", 400
+    fpath = os.path.join(DATA_DIR, safe_name)
+    if not os.path.exists(fpath):
+        return "文件不存在", 404
+    return send_file(fpath, as_attachment=True, download_name=safe_name)
+
+
+@app.route("/admin/backup/restore", methods=["POST"])
+@admin_required
+def restore_backup_route():
+    backup_name = request.form.get("backup_name", "").strip()
+    safe_name = os.path.basename(backup_name)
+    if not safe_name.startswith("links_backup_") or not safe_name.endswith(".json"):
+        flash("非法文件名", "error")
+        return redirect(url_for("backup_page"))
+    fpath = os.path.join(DATA_DIR, safe_name)
+    if not os.path.exists(fpath):
+        flash("备份文件不存在", "error")
+        return redirect(url_for("backup_page"))
+    if restore_backup(fpath):
+        flash(f"已从 {safe_name} 恢复数据", "success")
+    else:
+        flash("恢复失败", "error")
+    return redirect(url_for("backup_page"))
+
+
+# ============ 子链接查询系统
 # ============ 子链接查询系统（给用户用，无需登录） ============
 
 @app.route("/s/<link_id>", methods=["GET", "POST"])
@@ -1012,19 +1307,19 @@ def sub_query(link_id):
         email_addr = request.form.get("email", "").strip()
 
         if not email_addr:
-            return render_template_string(sub_query_input_html(link_id, expire_at, "请输入邮箱号"), 400)
+            return render_template_string(sub_query_input_html(link_id, expire_at, "请输入邮箱号")), 400
 
         if email_addr not in allowed_emails:
-            return render_template_string(sub_query_input_html(link_id, expire_at, "该邮箱不在此链接的查询范围内"), 403)
+            return render_template_string(sub_query_input_html(link_id, expire_at, "该邮箱不在此链接的查询范围内")), 403
 
         accounts = parse_accounts()
         auth_code = accounts.get(email_addr, "")
         if not auth_code:
-            return render_template_string(sub_query_input_html(link_id, expire_at, "邮箱配置错误，无法读取"), 500)
+            return render_template_string(sub_query_input_html(link_id, expire_at, "邮箱配置错误，无法读取")), 500
 
         emails_data = fetch_emails(email_addr, auth_code, max_emails)
         if not emails_data:
-            return render_template_string(sub_query_input_html(link_id, expire_at, "该邮箱暂无邮件或读取失败"), 404)
+            return render_template_string(sub_query_input_html(link_id, expire_at, "该邮箱暂无邮件或读取失败")), 404
 
         return render_template_string(sub_query_result_html(link_id, email_addr, expire_at, emails_data))
 

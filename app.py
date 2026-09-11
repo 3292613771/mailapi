@@ -4,6 +4,7 @@ import re
 import secrets
 import imaplib
 import email
+import base64
 from email.header import decode_header
 from email.utils import parsedate_to_datetime
 from datetime import datetime, timedelta
@@ -22,7 +23,6 @@ DOMAIN = "mailauto.zeabur.app"
 PORT = int(os.environ.get("PORT", 8080))
 
 # 数据目录：优先从环境变量读取，默认 /data
-# Zeabur 挂载 Volume 到 /data，并设置环境变量 DATA_DIR=/data
 DATA_DIR = "/data"
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -53,7 +53,6 @@ def save_json(filepath, data):
 def save_links(data):
     save_json(LINKS_FILE, data)
     save_json(BACKUP_FILE, data)
-    # 同时创建带时间戳的备份（保留最近30个）
     create_timestamp_backup()
     cleanup_old_backups()
 
@@ -63,7 +62,6 @@ def parse_accounts():
     print(f"[DEBUG] 尝试读取: {ACCOUNTS_FILE}, 存在: {os.path.exists(ACCOUNTS_FILE)}")
     if not os.path.exists(ACCOUNTS_FILE):
         print(f"[DEBUG] 文件不存在: {ACCOUNTS_FILE}")
-        # 列出代码目录下所有文件，帮助排查
         code_dir = os.path.dirname(os.path.abspath(__file__))
         if os.path.exists(code_dir):
             files = os.listdir(code_dir)
@@ -226,19 +224,9 @@ def get_folder_label(folder):
         return "广告邮件", "ad"
 
 
-
 def format_email_time(date_str):
-    """
-    将邮件原始时间格式化为北京时间，风格类似QQ邮箱
-    - 今天 -> 今天 HH:MM
-    - 昨天 -> 昨天 HH:MM
-    - 本周 -> 周X HH:MM
-    - 今年 -> MM-DD HH:MM
-    - 更早 -> YYYY-MM-DD HH:MM
-    """
     if not date_str:
         return ""
-
     try:
         dt = parsedate_to_datetime(date_str)
     except Exception:
@@ -246,31 +234,21 @@ def format_email_time(date_str):
             dt = datetime.strptime(date_str.strip(), "%a, %d %b %Y %H:%M:%S %z")
         except Exception:
             return date_str
-
-    # 统一转换为 offset-naive 的北京时间
     try:
         if dt.tzinfo is not None:
-            # 带时区的，先转UTC再+8小时（简化处理）
             from datetime import timezone
             utc_dt = dt.astimezone(timezone.utc)
             dt = utc_dt.replace(tzinfo=None) + timedelta(hours=8)
         else:
-            # 无时区，假设是UTC，+8小时
             dt = dt + timedelta(hours=8)
     except Exception:
-        # 转换失败，去掉时区信息
         if dt.tzinfo is not None:
             dt = dt.replace(tzinfo=None)
-
-    # 确保 dt 是 offset-naive
     if dt.tzinfo is not None:
         dt = dt.replace(tzinfo=None)
-
     now = datetime.now()
     today = now.replace(hour=0, minute=0, second=0, microsecond=0)
     yesterday = today - timedelta(days=1)
-
-    # 判断日期
     if dt.date() == today.date():
         return dt.strftime("今天 %H:%M")
     elif dt.date() == yesterday.date():
@@ -285,6 +263,16 @@ def format_email_time(date_str):
             return dt.strftime("%m-%d %H:%M")
     else:
         return dt.strftime("%Y-%m-%d %H:%M")
+
+
+def format_file_size(size):
+    """格式化文件大小"""
+    if size < 1024:
+        return f"{size} B"
+    elif size < 1024 * 1024:
+        return f"{size / 1024:.1f} KB"
+    else:
+        return f"{size / (1024 * 1024):.2f} MB"
 
 
 def fetch_emails(email_addr, auth_code, limit=10):
@@ -331,7 +319,6 @@ def fetch_emails(email_addr, auth_code, limit=10):
                 date_dt = None
                 try:
                     date_dt = parsedate_to_datetime(raw_date)
-                    # 统一转为 offset-naive 用于排序
                     if date_dt.tzinfo is not None:
                         from datetime import timezone
                         utc_dt = date_dt.astimezone(timezone.utc)
@@ -343,6 +330,32 @@ def fetch_emails(email_addr, auth_code, limit=10):
                 preview_text = re.sub(r"<[^>]+>", " ", body)
                 preview_text = re.sub(r"\s+", " ", preview_text).strip()
                 preview = preview_text[:120] + ("..." if len(preview_text) > 120 else "")
+
+                # ================= 附件解析开始 =================
+                attachments = []
+                if msg.is_multipart():
+                    for part in msg.walk():
+                        content_disposition = str(part.get("Content-Disposition", ""))
+                        # 提取有文件名的附件
+                        if "attachment" in content_disposition or "inline" in content_disposition:
+                            filename = part.get_filename()
+                            if filename:
+                                filename = decode_str(filename)
+                                payload = part.get_payload(decode=True)
+                                if payload:
+                                    # 过滤掉超大附件（例如大于10MB，防止内存溢出）
+                                    if len(payload) > 10 * 1024 * 1024:
+                                        continue
+                                    b64_data = base64.b64encode(payload).decode('utf-8')
+                                    content_type = part.get_content_type()
+                                    attachments.append({
+                                        "filename": filename,
+                                        "content_type": content_type,
+                                        "data": b64_data,
+                                        "size": len(payload)
+                                    })
+                # ================= 附件解析结束 =================
+
                 all_emails.append({
                     "folder": folder,
                     "folder_label": folder_label,
@@ -353,6 +366,7 @@ def fetch_emails(email_addr, auth_code, limit=10):
                     "date_dt": date_dt,
                     "body_html": body,
                     "preview": preview,
+                    "attachments": attachments,  # 新增附件字段
                 })
             mail.logout()
         except Exception:
@@ -361,7 +375,6 @@ def fetch_emails(email_addr, auth_code, limit=10):
             except Exception:
                 pass
     
-    # 确保所有 date_dt 都是 offset-naive
     for e in all_emails:
         if e["date_dt"] is not None and e["date_dt"].tzinfo is not None:
             from datetime import timezone
@@ -572,13 +585,9 @@ def admin():
     """
     return render_template_string(html)
 
-
-
-
 # ============ 备份管理 ============
 
 def get_backup_files():
-    """获取所有备份文件列表"""
     backups = []
     if not os.path.exists(DATA_DIR):
         return backups
@@ -601,7 +610,6 @@ def get_backup_files():
 
 
 def create_timestamp_backup():
-    """创建带时间戳的备份"""
     if not os.path.exists(LINKS_FILE):
         return None
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -619,13 +627,10 @@ def create_timestamp_backup():
 
 
 def restore_backup(backup_path):
-    """从备份文件恢复"""
     try:
         with open(backup_path, "r", encoding="utf-8") as f:
-            json.load(f)  # 验证JSON有效
-        # 先创建当前状态的备份
+            json.load(f)
         create_timestamp_backup()
-        # 复制备份到主文件
         with open(backup_path, "r", encoding="utf-8") as src:
             data = src.read()
         with open(LINKS_FILE, "w", encoding="utf-8") as dst:
@@ -638,9 +643,7 @@ def restore_backup(backup_path):
         return False
 
 
-
 def cleanup_old_backups(max_keep=30):
-    """清理旧备份，只保留最近N个"""
     backups = []
     if not os.path.exists(DATA_DIR):
         return
@@ -771,6 +774,25 @@ def total_query_result_html(email_addr, emails_data):
         from_ = mail.get("from", "未知")
         date_str = mail.get("date_str", "")
         preview = mail.get("preview", "")
+        
+        # 构建附件 HTML
+        attachments_html = ""
+        if mail.get("attachments"):
+            attachments_html += '<div class="attachments-area">'
+            attachments_html += '<div class="attachments-title">📎 附件 (%d)</div>' % len(mail["attachments"])
+            for att in mail["attachments"]:
+                data_url = f"data:{att['content_type']};base64,{att['data']}"
+                size_str = format_file_size(att['size'])
+                attachments_html += f'''
+                <div class="attachment-item">
+                    <span class="att-icon">📄</span>
+                    <span class="att-name">{att['filename']}</span>
+                    <span class="att-size">({size_str})</span>
+                    <a href="{data_url}" download="{att['filename']}" class="att-download-btn" onclick="event.stopPropagation()">下载</a>
+                </div>
+                '''
+            attachments_html += '</div>'
+
         cards_html += f"""
         <div class="email-card" onclick="toggleEmail({idx})">
             <div class="email-summary">
@@ -786,7 +808,10 @@ def total_query_result_html(email_addr, emails_data):
             </div>
             <div class="email-full" id="email-full-{idx}">
                 <div class="email-divider"></div>
-                <div class="email-body-content">{safe_body}</div>
+                <div class="email-body-content">
+                    {safe_body}
+                    {attachments_html}
+                </div>
             </div>
         </div>
         """
@@ -832,6 +857,14 @@ def total_query_result_html(email_addr, emails_data):
             .email-body-content {{ padding: 20px; background: #fafafa; font-size: 14px; line-height: 1.8; }}
             .email-body-content img {{ max-width: 100%; height: auto; }}
             .email-body-content a {{ color: #667eea; }}
+            .attachments-area {{ margin-top: 20px; padding-top: 15px; border-top: 1px dashed #ddd; }}
+            .attachments-title {{ font-size: 14px; font-weight: 600; color: #555; margin-bottom: 10px; }}
+            .attachment-item {{ display: flex; align-items: center; background: #fff; border: 1px solid #eee; border-radius: 6px; padding: 8px 12px; margin-bottom: 8px; font-size: 13px; }}
+            .att-icon {{ margin-right: 8px; font-size: 16px; }}
+            .att-name {{ flex: 1; word-break: break-all; color: #333; }}
+            .att-size {{ color: #999; margin-left: 8px; white-space: nowrap; }}
+            .att-download-btn {{ display: inline-block; margin-left: 12px; padding: 4px 12px; background: #667eea; color: #fff; border-radius: 4px; text-decoration: none; font-size: 12px; }}
+            .att-download-btn:hover {{ background: #5a6fd6; }}
             .footer {{ text-align: center; color: #aaa; font-size: 12px; margin-top: 30px; padding-bottom: 20px; }}
         </style>
     </head>
@@ -876,7 +909,6 @@ def total_query_result_html(email_addr, emails_data):
     </body>
     </html>
     """
-
 
 # ============ 子链接生成与管理 ============
 
@@ -1178,8 +1210,6 @@ def invalidate_by_id_page():
     return render_template_string(html)
 
 
-
-
 @app.route("/admin/backup")
 @admin_required
 def backup_page():
@@ -1297,8 +1327,6 @@ def restore_backup_route():
         flash("恢复失败", "error")
     return redirect(url_for("backup_page"))
 
-
-# ============ 子链接查询系统
 # ============ 子链接查询系统（给用户用，无需登录） ============
 
 @app.route("/s/<link_id>", methods=["GET", "POST"])
@@ -1399,6 +1427,25 @@ def sub_query_result_html(link_id, email_addr, expire_at, emails_data):
         from_ = mail.get("from", "未知")
         date_str = mail.get("date_str", "")
         preview = mail.get("preview", "")
+        
+        # 构建附件 HTML
+        attachments_html = ""
+        if mail.get("attachments"):
+            attachments_html += '<div class="attachments-area">'
+            attachments_html += '<div class="attachments-title">📎 附件 (%d)</div>' % len(mail["attachments"])
+            for att in mail["attachments"]:
+                data_url = f"data:{att['content_type']};base64,{att['data']}"
+                size_str = format_file_size(att['size'])
+                attachments_html += f'''
+                <div class="attachment-item">
+                    <span class="att-icon">📄</span>
+                    <span class="att-name">{att['filename']}</span>
+                    <span class="att-size">({size_str})</span>
+                    <a href="{data_url}" download="{att['filename']}" class="att-download-btn" onclick="event.stopPropagation()">下载</a>
+                </div>
+                '''
+            attachments_html += '</div>'
+
         cards_html += f"""
         <div class="email-card" onclick="toggleEmail({idx})">
             <div class="email-summary">
@@ -1414,7 +1461,10 @@ def sub_query_result_html(link_id, email_addr, expire_at, emails_data):
             </div>
             <div class="email-full" id="email-full-{idx}">
                 <div class="email-divider"></div>
-                <div class="email-body-content">{safe_body}</div>
+                <div class="email-body-content">
+                    {safe_body}
+                    {attachments_html}
+                </div>
             </div>
         </div>
         """
@@ -1457,6 +1507,14 @@ def sub_query_result_html(link_id, email_addr, expire_at, emails_data):
             .email-body-content {{ padding: 20px; background: #fafafa; font-size: 14px; line-height: 1.8; }}
             .email-body-content img {{ max-width: 100%; height: auto; }}
             .email-body-content a {{ color: #667eea; }}
+            .attachments-area {{ margin-top: 20px; padding-top: 15px; border-top: 1px dashed #ddd; }}
+            .attachments-title {{ font-size: 14px; font-weight: 600; color: #555; margin-bottom: 10px; }}
+            .attachment-item {{ display: flex; align-items: center; background: #fff; border: 1px solid #eee; border-radius: 6px; padding: 8px 12px; margin-bottom: 8px; font-size: 13px; }}
+            .att-icon {{ margin-right: 8px; font-size: 16px; }}
+            .att-name {{ flex: 1; word-break: break-all; color: #333; }}
+            .att-size {{ color: #999; margin-left: 8px; white-space: nowrap; }}
+            .att-download-btn {{ display: inline-block; margin-left: 12px; padding: 4px 12px; background: #667eea; color: #fff; border-radius: 4px; text-decoration: none; font-size: 12px; }}
+            .att-download-btn:hover {{ background: #5a6fd6; }}
             .footer {{ text-align: center; color: #aaa; font-size: 12px; margin-top: 30px; padding-bottom: 20px; }}
         </style>
     </head>

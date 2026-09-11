@@ -18,17 +18,17 @@ app = Flask(__name__)
 app.secret_key = "mail-auto-secret-key-2026-v1"
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=2)
 
+# 附件临时缓存（新增）
+TEMP_ATTACHMENT_CACHE = {}
+
 ADMIN_PASSWORD = "060910"
 DOMAIN = "mailauto.zeabur.app"
 PORT = int(os.environ.get("PORT", 8080))
 
-# 数据目录：优先从环境变量读取，默认 /data
 DATA_DIR = "/data"
 os.makedirs(DATA_DIR, exist_ok=True)
 
-# accounts.txt 放在代码目录（随代码部署）
 ACCOUNTS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "accounts.txt")
-# 动态数据放在挂载目录
 LINKS_FILE = os.path.join(DATA_DIR, "links.json")
 BACKUP_FILE = os.path.join(DATA_DIR, "links_backup.json")
 
@@ -266,14 +266,12 @@ def format_email_time(date_str):
 
 
 def format_file_size(size):
-    """格式化文件大小"""
     if size < 1024:
         return f"{size} B"
     elif size < 1024 * 1024:
         return f"{size / 1024:.1f} KB"
     else:
         return f"{size / (1024 * 1024):.2f} MB"
-
 
 def fetch_emails(email_addr, auth_code, limit=10):
     folders = ["INBOX", "Junk"]
@@ -331,27 +329,28 @@ def fetch_emails(email_addr, auth_code, limit=10):
                 preview_text = re.sub(r"\s+", " ", preview_text).strip()
                 preview = preview_text[:120] + ("..." if len(preview_text) > 120 else "")
 
-                # ================= 附件解析开始 =================
+                # ================= 附件解析（改为缓存 ID 方式） =================
                 attachments = []
                 if msg.is_multipart():
                     for part in msg.walk():
                         content_disposition = str(part.get("Content-Disposition", ""))
-                        # 提取有文件名的附件
                         if "attachment" in content_disposition or "inline" in content_disposition:
                             filename = part.get_filename()
                             if filename:
                                 filename = decode_str(filename)
                                 payload = part.get_payload(decode=True)
-                                if payload:
-                                    # 过滤掉超大附件（例如大于10MB，防止内存溢出）
-                                    if len(payload) > 10 * 1024 * 1024:
-                                        continue
-                                    b64_data = base64.b64encode(payload).decode('utf-8')
-                                    content_type = part.get_content_type()
-                                    attachments.append({
+                                if payload and len(payload) < 10 * 1024 * 1024:
+                                    att_id = secrets.token_urlsafe(16)
+                                    TEMP_ATTACHMENT_CACHE[att_id] = {
                                         "filename": filename,
-                                        "content_type": content_type,
-                                        "data": b64_data,
+                                        "content_type": part.get_content_type(),
+                                        "data": payload,
+                                        "size": len(payload)
+                                    }
+                                    attachments.append({
+                                        "id": att_id,
+                                        "filename": filename,
+                                        "content_type": part.get_content_type(),
                                         "size": len(payload)
                                     })
                 # ================= 附件解析结束 =================
@@ -366,7 +365,7 @@ def fetch_emails(email_addr, auth_code, limit=10):
                     "date_dt": date_dt,
                     "body_html": body,
                     "preview": preview,
-                    "attachments": attachments,  # 新增附件字段
+                    "attachments": attachments,
                 })
             mail.logout()
         except Exception:
@@ -374,7 +373,7 @@ def fetch_emails(email_addr, auth_code, limit=10):
                 mail.logout()
             except Exception:
                 pass
-    
+
     for e in all_emails:
         if e["date_dt"] is not None and e["date_dt"].tzinfo is not None:
             from datetime import timezone
@@ -585,6 +584,7 @@ def admin():
     """
     return render_template_string(html)
 
+
 # ============ 备份管理 ============
 
 def get_backup_files():
@@ -662,6 +662,39 @@ def cleanup_old_backups(max_keep=30):
                 os.remove(fpath)
             except Exception:
                 pass
+
+
+# ============ 附件下载/预览路由（新增） ============
+
+@app.route("/download/<att_id>")
+def download_attachment(att_id):
+    from flask import send_file, abort, Response
+    import io
+    att = TEMP_ATTACHMENT_CACHE.get(att_id)
+    if not att:
+        abort(404)
+    content_type = att.get("content_type", "application/octet-stream")
+    filename = att["filename"]
+    data = att["data"]
+
+    preview_types = (
+        "application/pdf",
+        "image/jpeg", "image/jpg", "image/png", "image/gif",
+        "image/webp", "image/bmp", "image/svg+xml",
+        "text/plain", "text/html"
+    )
+
+    if content_type in preview_types:
+        resp = Response(data, mimetype=content_type)
+        resp.headers["Content-Disposition"] = f'inline; filename="{filename}"'
+        return resp
+    else:
+        return send_file(
+            io.BytesIO(data),
+            mimetype=content_type,
+            as_attachment=True,
+            download_name=filename
+        )
 
 
 # ============ 总查询系统（管理员自用） ============
@@ -774,21 +807,21 @@ def total_query_result_html(email_addr, emails_data):
         from_ = mail.get("from", "未知")
         date_str = mail.get("date_str", "")
         preview = mail.get("preview", "")
-        
-        # 构建附件 HTML
+
+        # 构建附件 HTML（改为 /download/ 链接）
         attachments_html = ""
         if mail.get("attachments"):
             attachments_html += '<div class="attachments-area">'
             attachments_html += '<div class="attachments-title">📎 附件 (%d)</div>' % len(mail["attachments"])
             for att in mail["attachments"]:
-                data_url = f"data:{att['content_type']};base64,{att['data']}"
+                download_url = f"/download/{att['id']}"
                 size_str = format_file_size(att['size'])
                 attachments_html += f'''
                 <div class="attachment-item">
                     <span class="att-icon">📄</span>
                     <span class="att-name">{att['filename']}</span>
                     <span class="att-size">({size_str})</span>
-                    <a href="{data_url}" download="{att['filename']}" class="att-download-btn" onclick="event.stopPropagation()">下载</a>
+                    <a href="{download_url}" target="_blank" class="att-download-btn" onclick="event.stopPropagation()">查看</a>
                 </div>
                 '''
             attachments_html += '</div>'
@@ -909,6 +942,7 @@ def total_query_result_html(email_addr, emails_data):
     </body>
     </html>
     """
+
 
 # ============ 子链接生成与管理 ============
 
@@ -1327,7 +1361,8 @@ def restore_backup_route():
         flash("恢复失败", "error")
     return redirect(url_for("backup_page"))
 
-# ============ 子链接查询系统（给用户用，无需登录） ============
+
+# ============ 子链接查询系统（给用户用） ============
 
 @app.route("/s/<link_id>", methods=["GET", "POST"])
 def sub_query(link_id):
@@ -1427,21 +1462,21 @@ def sub_query_result_html(link_id, email_addr, expire_at, emails_data):
         from_ = mail.get("from", "未知")
         date_str = mail.get("date_str", "")
         preview = mail.get("preview", "")
-        
-        # 构建附件 HTML
+
+        # 构建附件 HTML（改为 /download/ 链接）
         attachments_html = ""
         if mail.get("attachments"):
             attachments_html += '<div class="attachments-area">'
             attachments_html += '<div class="attachments-title">📎 附件 (%d)</div>' % len(mail["attachments"])
             for att in mail["attachments"]:
-                data_url = f"data:{att['content_type']};base64,{att['data']}"
+                download_url = f"/download/{att['id']}"
                 size_str = format_file_size(att['size'])
                 attachments_html += f'''
                 <div class="attachment-item">
                     <span class="att-icon">📄</span>
                     <span class="att-name">{att['filename']}</span>
                     <span class="att-size">({size_str})</span>
-                    <a href="{data_url}" download="{att['filename']}" class="att-download-btn" onclick="event.stopPropagation()">下载</a>
+                    <a href="{download_url}" target="_blank" class="att-download-btn" onclick="event.stopPropagation()">查看</a>
                 </div>
                 '''
             attachments_html += '</div>'

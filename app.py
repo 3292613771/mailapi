@@ -23,7 +23,7 @@ app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=2)
 TEMP_ATTACHMENT_CACHE = {}
 
 ADMIN_PASSWORD = "060910"
-DOMAIN = "mail-auto.zeabur.app"          # 保持你原来的域名
+DOMAIN = "qqmail-api.zeabur.app"          # 已换成你新系统的域名
 PORT = int(os.environ.get("PORT", 8080))
 
 DATA_DIR = "/data"
@@ -32,6 +32,9 @@ os.makedirs(DATA_DIR, exist_ok=True)
 ACCOUNTS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "accounts.txt")
 LINKS_FILE = os.path.join(DATA_DIR, "links.json")
 BACKUP_FILE = os.path.join(DATA_DIR, "links_backup.json")
+
+# ===== 全局缓存账号数据，防止反复读取大文件拖死程序 =====
+_ACCOUNTS_CACHE = None
 
 
 def load_json(filepath, default=None):
@@ -46,9 +49,7 @@ def load_json(filepath, default=None):
         return default
 
 
-# ========== 安全写入（防缩水 + 先备份 + 直接覆盖） ==========
 def save_json(filepath, data):
-    """安全写入：防缩水保护 + 先备份 + 直接覆盖"""
     if filepath == LINKS_FILE:
         old_count = 0
         try:
@@ -79,7 +80,6 @@ def save_json(filepath, data):
             try:
                 import shutil
                 shutil.copy2(backup_file, filepath)
-                print("🔄 已从备份恢复原文件")
             except:
                 pass
 
@@ -92,36 +92,44 @@ def save_links(data):
 
 
 def parse_accounts():
+    """加载账号，带缓存，只读一次，后续直接返回内存数据"""
+    global _ACCOUNTS_CACHE
+    if _ACCOUNTS_CACHE is not None:
+        return _ACCOUNTS_CACHE
+
     accounts = {}
-    print(f"[DEBUG] 尝试读取: {ACCOUNTS_FILE}, 存在: {os.path.exists(ACCOUNTS_FILE)}")
+    print(f"[DEBUG] 开始加载账号: {ACCOUNTS_FILE}, 存在: {os.path.exists(ACCOUNTS_FILE)}")
     if not os.path.exists(ACCOUNTS_FILE):
         print(f"[DEBUG] 文件不存在: {ACCOUNTS_FILE}")
-        code_dir = os.path.dirname(os.path.abspath(__file__))
-        if os.path.exists(code_dir):
-            files = os.listdir(code_dir)
-            print(f"[DEBUG] 代码目录 {code_dir} 内容: {files}")
+        _ACCOUNTS_CACHE = accounts
         return accounts
-    with open(ACCOUNTS_FILE, "r", encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            if "----" in line:
-                parts = line.split("----")
-                if len(parts) == 2:
-                    email_addr = parts[0].strip()
-                    auth_code = parts[1].strip()
-                    if email_addr and auth_code:
-                        accounts[email_addr] = auth_code
-            else:
-                parts = line.split()
-                if len(parts) >= 2:
-                    auth_code = parts[-1].strip()
-                    emails = [p.strip() for p in parts[:-1] if p.strip()]
-                    for email_addr in emails:
-                        if email_addr and "@" in email_addr:
+
+    try:
+        with open(ACCOUNTS_FILE, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "----" in line:
+                    parts = line.split("----")
+                    if len(parts) == 2:
+                        email_addr = parts[0].strip()
+                        auth_code = parts[1].strip()
+                        if email_addr and auth_code:
                             accounts[email_addr] = auth_code
-    print(f"[DEBUG] 成功解析 {len(accounts)} 个邮箱")
+                else:
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        auth_code = parts[-1].strip()
+                        emails = [p.strip() for p in parts[:-1] if p.strip()]
+                        for email_addr in emails:
+                            if email_addr and "@" in email_addr:
+                                accounts[email_addr] = auth_code
+    except Exception as e:
+        print(f"[ERROR] 读取账号失败: {e}")
+
+    print(f"[DEBUG] 账号加载完成，共 {len(accounts)} 个邮箱")
+    _ACCOUNTS_CACHE = accounts
     return accounts
 
 
@@ -308,8 +316,7 @@ def format_file_size(size):
         return f"{size / (1024 * 1024):.2f} MB"
 
 
-def fetch_emails(email_addr, auth_code, limit=1):
-    """拉取邮件。limit 默认 1（子链接、闲鱼发货用）；总查询可传 1-50。"""
+def fetch_emails(email_addr, auth_code, limit=10):
     folders = ["INBOX", "Junk"]
     try:
         time.sleep(0.5)
@@ -825,7 +832,7 @@ def total_query_input_html(error_msg=""):
                     <button type="submit">查询邮件</button>
                 </form>
             </div>
-            <div class="footer">mail-auto.zeabur.app</div>
+            <div class="footer">qqmail-api.zeabur.app</div>
         </div>
     </body>
     </html>
@@ -965,7 +972,7 @@ def total_query_result_html(email_addr, emails_data):
             <div class="email-list">
                 {cards_html}
             </div>
-            <div class="footer">mail-auto.zeabur.app</div>
+            <div class="footer">qqmail-api.zeabur.app</div>
         </div>
         <script>
             function toggleEmail(idx) {{
@@ -1033,9 +1040,7 @@ def create_link_page():
     if request.method == "POST":
         emails_text = request.form.get("emails", "")
         days = int(request.form.get("days", 30))
-
-        # 强制只能查 1 封
-        max_emails = 1
+        max_emails = int(request.form.get("max_emails", 10))
 
         allowed_emails = [e.strip() for e in emails_text.split("\n") if e.strip() and "@" in e.strip()]
         if not allowed_emails:
@@ -1047,6 +1052,9 @@ def create_link_page():
         if invalid_emails:
             flash(f"以下邮箱不在库存中: {', '.join(invalid_emails)}", "error")
             return redirect(url_for("create_link_page"))
+
+        if max_emails < 1 or max_emails > 50:
+            max_emails = 10
 
         link_id = create_sub_link(allowed_emails, days, max_emails)
         link_url = f"https://{DOMAIN}/s/{link_id}"
@@ -1093,12 +1101,16 @@ def create_link_page():
                         <label>可查询邮箱（每行一个）</label>
                         <textarea name="emails" rows="8" placeholder="example1@qq.com&#10;example2@qq.com" required></textarea>
                     </div>
-                    <div class="form-group">
-                        <label>有效期（天）</label>
-                        <input type="number" name="days" min="1" value="30" required>
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label>有效期（天）</label>
+                            <input type="number" name="days" min="1" value="30" required>
+                        </div>
+                        <div class="form-group">
+                            <label>邮件数量限制（1-50）</label>
+                            <input type="number" name="max_emails" min="1" max="50" value="10" required>
+                        </div>
                     </div>
-                    <p style="color:#888;font-size:13px;">本次链接固定只能查询 <strong>1 封</strong> 邮件。</p>
-                    <br>
                     <button type="submit" class="btn btn-primary">生成子链接</button>
                 </form>
             </div>
@@ -1133,7 +1145,7 @@ def links_list():
         <tr>
             <td><code>{link["id"][:18]}...</code></td>
             <td>{emails_display}</td>
-            <td>{link.get("max_emails", 1)}</td>
+            <td>{link.get("max_emails", 10)}</td>
             <td>{link.get("created_at", "")}</td>
             <td>{link.get("expire_at", "")}</td>
             <td>{status_badge}</td>
@@ -1403,7 +1415,7 @@ def sub_query(link_id):
         return "<h1>链接已失效或已过期</h1>", 403
 
     allowed_emails = link_data.get("allowed_emails", [])
-    max_emails = link_data.get("max_emails", 1)
+    max_emails = link_data.get("max_emails", 10)
     expire_at = link_data.get("expire_at", "")
 
     if request.method == "POST":
@@ -1473,7 +1485,7 @@ def sub_query_input_html(link_id, expire_at, error_msg=""):
                     <strong>提示:</strong> 请输入您购买的完整邮箱地址，点击邮件卡片即可查看完整内容。
                 </div>
             </div>
-            <div class="footer">mail-auto.zeabur.app</div>
+            <div class="footer">qqmail-api.zeabur.app</div>
         </div>
     </body>
     </html>
@@ -1595,7 +1607,7 @@ def sub_query_result_html(link_id, email_addr, expire_at, emails_data):
             <div class="email-list">
                 {cards_html}
             </div>
-            <div class="footer">mail-auto.zeabur.app</div>
+            <div class="footer">qqmail-api.zeabur.app</div>
         </div>
         <script>
             function toggleEmail(idx) {{
@@ -1610,7 +1622,7 @@ def sub_query_result_html(link_id, email_addr, expire_at, emails_data):
     """
 
 
-# ============ 闲鱼自动发货接口（子链接固定只查 1 封） ============
+# ============ 闲鱼自动发货接口（秒级返回，纯文本响应） ============
 @app.route("/api/auto_create_link", methods=["POST"])
 def auto_create_link():
     data = request.get_json() or {}
@@ -1620,12 +1632,18 @@ def auto_create_link():
         quantity = int(data.get("quantity", 1))
         days = int(data.get("days", 30))
     except (TypeError, ValueError):
-        return "quantity 和 days 必须为整数", 400
+        return "quantity 和 days 必须为整数"
 
     buyer_id = str(data.get("buyer_id") or secrets.token_urlsafe(8))
 
     if quantity <= 0:
-        return "数量必须大于0", 400
+        return "数量必须大于0"
+
+    # 兼容闲鱼可能传过来的“QQ英文邮箱”等规格名
+    if type_name == "QQ英文邮箱":
+        type_name = "英文"
+    elif type_name == "QQ数字邮箱":
+        type_name = "数字"
 
     all_accounts = parse_accounts()
 
@@ -1637,14 +1655,14 @@ def auto_create_link():
 
     type_emails = [e for e in all_accounts.keys() if detect_type(e) == type_name]
     if not type_emails:
-        return f"类型 '{type_name}' 没有可用邮箱", 400
+        return f"类型 '{type_name}' 没有可用邮箱"
 
     if len(type_emails) < quantity:
-        return f"库存不足，需要 {quantity} 个，实际只有 {len(type_emails)} 个", 400
+        return f"库存不足，需要 {quantity} 个，实际只有 {len(type_emails)} 个"
 
     selected_emails = random.sample(type_emails, quantity)
 
-    # 闲鱼生成的子链接固定只查 1 封
+    # 闲鱼发货生成的子链接固定只查 1 封，绝不查邮件，保证秒级返回
     link_id = create_sub_link(selected_emails, days, max_emails=1)
     link_url = f"https://{DOMAIN}/s/{link_id}"
     expire_at = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")

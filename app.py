@@ -23,7 +23,7 @@ app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=2)
 TEMP_ATTACHMENT_CACHE = {}
 
 ADMIN_PASSWORD = "060910"
-DOMAIN = "qqmail-api.zeabur.app"          # 已换成你新系统的域名
+DOMAIN = "mail-auto.zeabur.app"          # 你的域名
 PORT = int(os.environ.get("PORT", 8080))
 
 DATA_DIR = "/data"
@@ -832,7 +832,7 @@ def total_query_input_html(error_msg=""):
                     <button type="submit">查询邮件</button>
                 </form>
             </div>
-            <div class="footer">qqmail-api.zeabur.app</div>
+            <div class="footer">mail-auto.zeabur.app</div>
         </div>
     </body>
     </html>
@@ -972,7 +972,7 @@ def total_query_result_html(email_addr, emails_data):
             <div class="email-list">
                 {cards_html}
             </div>
-            <div class="footer">qqmail-api.zeabur.app</div>
+            <div class="footer">mail-auto.zeabur.app</div>
         </div>
         <script>
             function toggleEmail(idx) {{
@@ -1485,7 +1485,7 @@ def sub_query_input_html(link_id, expire_at, error_msg=""):
                     <strong>提示:</strong> 请输入您购买的完整邮箱地址，点击邮件卡片即可查看完整内容。
                 </div>
             </div>
-            <div class="footer">qqmail-api.zeabur.app</div>
+            <div class="footer">mail-auto.zeabur.app</div>
         </div>
     </body>
     </html>
@@ -1607,7 +1607,7 @@ def sub_query_result_html(link_id, email_addr, expire_at, emails_data):
             <div class="email-list">
                 {cards_html}
             </div>
-            <div class="footer">qqmail-api.zeabur.app</div>
+            <div class="footer">mail-auto.zeabur.app</div>
         </div>
         <script>
             function toggleEmail(idx) {{
@@ -1634,7 +1634,8 @@ def auto_create_link():
     except (TypeError, ValueError):
         return "quantity 和 days 必须为整数"
 
-    buyer_id = str(data.get("buyer_id") or secrets.token_urlsafe(8))
+    # 【关键修改】同时兼容 buyer_id 和 remark 两种字段名
+    buyer_id = str(data.get("buyer_id") or data.get("remark") or secrets.token_urlsafe(8))
 
     if quantity <= 0:
         return "数量必须大于0"

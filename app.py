@@ -20,11 +20,10 @@ app = Flask(__name__)
 app.secret_key = "mail-auto-secret-key-2026-v1"
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=2)
 
-# 附件临时缓存（新增）
 TEMP_ATTACHMENT_CACHE = {}
 
 ADMIN_PASSWORD = "060910"
-DOMAIN = "mail-auto.zeabur.app"          # ✅ 改回带横杠的域名
+DOMAIN = "mail-auto.zeabur.app"          # 保持你原来的域名
 PORT = int(os.environ.get("PORT", 8080))
 
 DATA_DIR = "/data"
@@ -50,7 +49,6 @@ def load_json(filepath, default=None):
 # ========== 安全写入（防缩水 + 先备份 + 直接覆盖） ==========
 def save_json(filepath, data):
     """安全写入：防缩水保护 + 先备份 + 直接覆盖"""
-    # 1. 防缩水保护（只对 links.json 生效，避免并发写入把数据清空）
     if filepath == LINKS_FILE:
         old_count = 0
         try:
@@ -64,7 +62,6 @@ def save_json(filepath, data):
             print(f"⚠️ 警告：数据异常缩水！旧:{old_count} 新:{new_count}，拒绝覆盖！")
             return
 
-    # 2. 先备份原文件
     backup_file = filepath + '.bak'
     try:
         if os.path.exists(filepath):
@@ -73,7 +70,6 @@ def save_json(filepath, data):
     except:
         pass
 
-    # 3. 安全写入
     try:
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -137,7 +133,7 @@ def generate_link_id():
     return secrets.token_urlsafe(16)
 
 
-def create_sub_link(allowed_emails, days, max_emails=10):
+def create_sub_link(allowed_emails, days, max_emails=1):
     links = get_links()
     link_id = generate_link_id()
     now = datetime.now()
@@ -312,12 +308,11 @@ def format_file_size(size):
         return f"{size / (1024 * 1024):.2f} MB"
 
 
-def fetch_emails(email_addr, auth_code, limit=10):
+def fetch_emails(email_addr, auth_code, limit=1):
+    """拉取邮件。limit 默认 1（子链接、闲鱼发货用）；总查询可传 1-50。"""
     folders = ["INBOX", "Junk"]
     try:
-        # 【刹车 1】连接前强制休息 0.5 秒，降低并发
         time.sleep(0.5)
-
         mail = imaplib.IMAP4_SSL("imap.qq.com", 993, timeout=15)
         mail.login(email_addr, auth_code)
         ad_folders = get_ad_folders(mail)
@@ -331,9 +326,7 @@ def fetch_emails(email_addr, auth_code, limit=10):
     all_emails = []
     for folder in folders:
         try:
-            # 【刹车 1】连接前强制休息 0.5 秒
             time.sleep(0.5)
-
             mail = imaplib.IMAP4_SSL("imap.qq.com", 993, timeout=15)
             mail.login(email_addr, auth_code)
             status, _ = mail.select(folder)
@@ -374,7 +367,6 @@ def fetch_emails(email_addr, auth_code, limit=10):
                 preview_text = re.sub(r"\s+", " ", preview_text).strip()
                 preview = preview_text[:120] + ("..." if len(preview_text) > 120 else "")
 
-                # ================= 附件解析（缓存 ID 方式） =================
                 attachments = []
                 if msg.is_multipart():
                     for part in msg.walk():
@@ -398,7 +390,6 @@ def fetch_emails(email_addr, auth_code, limit=10):
                                         "content_type": part.get_content_type(),
                                         "size": len(payload)
                                     })
-                # ================= 附件解析结束 =================
 
                 all_emails.append({
                     "folder": folder,
@@ -414,7 +405,6 @@ def fetch_emails(email_addr, auth_code, limit=10):
                 })
             mail.logout()
         except Exception:
-            # 【刹车 2】遇到错误强制休息 5 秒，避开腾讯风控
             time.sleep(5)
             try:
                 mail.logout()
@@ -1043,7 +1033,9 @@ def create_link_page():
     if request.method == "POST":
         emails_text = request.form.get("emails", "")
         days = int(request.form.get("days", 30))
-        max_emails = int(request.form.get("max_emails", 10))
+
+        # 强制只能查 1 封
+        max_emails = 1
 
         allowed_emails = [e.strip() for e in emails_text.split("\n") if e.strip() and "@" in e.strip()]
         if not allowed_emails:
@@ -1054,10 +1046,6 @@ def create_link_page():
         invalid_emails = [e for e in allowed_emails if e not in all_accounts]
         if invalid_emails:
             flash(f"以下邮箱不在库存中: {', '.join(invalid_emails)}", "error")
-            return redirect(url_for("create_link_page"))
-
-        if max_emails < 1 or max_emails > 50:
-            flash("邮件数量限制必须在 1-50 之间", "error")
             return redirect(url_for("create_link_page"))
 
         link_id = create_sub_link(allowed_emails, days, max_emails)
@@ -1105,16 +1093,12 @@ def create_link_page():
                         <label>可查询邮箱（每行一个）</label>
                         <textarea name="emails" rows="8" placeholder="example1@qq.com&#10;example2@qq.com" required></textarea>
                     </div>
-                    <div class="grid-2">
-                        <div class="form-group">
-                            <label>有效期（天）</label>
-                            <input type="number" name="days" min="1" value="30" required>
-                        </div>
-                        <div class="form-group">
-                            <label>邮件数量限制（1-50）</label>
-                            <input type="number" name="max_emails" min="1" max="50" value="10" required>
-                        </div>
+                    <div class="form-group">
+                        <label>有效期（天）</label>
+                        <input type="number" name="days" min="1" value="30" required>
                     </div>
+                    <p style="color:#888;font-size:13px;">本次链接固定只能查询 <strong>1 封</strong> 邮件。</p>
+                    <br>
                     <button type="submit" class="btn btn-primary">生成子链接</button>
                 </form>
             </div>
@@ -1149,7 +1133,7 @@ def links_list():
         <tr>
             <td><code>{link["id"][:18]}...</code></td>
             <td>{emails_display}</td>
-            <td>{link.get("max_emails", 10)}</td>
+            <td>{link.get("max_emails", 1)}</td>
             <td>{link.get("created_at", "")}</td>
             <td>{link.get("expire_at", "")}</td>
             <td>{status_badge}</td>
@@ -1419,7 +1403,7 @@ def sub_query(link_id):
         return "<h1>链接已失效或已过期</h1>", 403
 
     allowed_emails = link_data.get("allowed_emails", [])
-    max_emails = link_data.get("max_emails", 10)
+    max_emails = link_data.get("max_emails", 1)
     expire_at = link_data.get("expire_at", "")
 
     if request.method == "POST":
@@ -1626,7 +1610,7 @@ def sub_query_result_html(link_id, email_addr, expire_at, emails_data):
     """
 
 
-# ============ 闲鱼自动发货接口（完全兼容旧系统） ============
+# ============ 闲鱼自动发货接口（子链接固定只查 1 封） ============
 @app.route("/api/auto_create_link", methods=["POST"])
 def auto_create_link():
     data = request.get_json() or {}
@@ -1660,7 +1644,8 @@ def auto_create_link():
 
     selected_emails = random.sample(type_emails, quantity)
 
-    link_id = create_sub_link(selected_emails, days, max_emails=50)
+    # 闲鱼生成的子链接固定只查 1 封
+    link_id = create_sub_link(selected_emails, days, max_emails=1)
     link_url = f"https://{DOMAIN}/s/{link_id}"
     expire_at = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
 

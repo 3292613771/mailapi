@@ -5,6 +5,8 @@ import secrets
 import imaplib
 import email
 import base64
+import time
+import random
 from email.header import decode_header
 from email.utils import parsedate_to_datetime
 from datetime import datetime, timedelta
@@ -22,7 +24,7 @@ app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=2)
 TEMP_ATTACHMENT_CACHE = {}
 
 ADMIN_PASSWORD = "060910"
-DOMAIN = "mailauto.zeabur.app"
+DOMAIN = "mail-auto.zeabur.app"          # ✅ 改回带横杠的域名
 PORT = int(os.environ.get("PORT", 8080))
 
 DATA_DIR = "/data"
@@ -45,9 +47,45 @@ def load_json(filepath, default=None):
         return default
 
 
+# ========== 安全写入（防缩水 + 先备份 + 直接覆盖） ==========
 def save_json(filepath, data):
-    with open(filepath, "w", encoding="utf-8") as fh:
-        json.dump(data, fh, ensure_ascii=False, indent=2)
+    """安全写入：防缩水保护 + 先备份 + 直接覆盖"""
+    # 1. 防缩水保护（只对 links.json 生效，避免并发写入把数据清空）
+    if filepath == LINKS_FILE:
+        old_count = 0
+        try:
+            if os.path.exists(filepath):
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    old_count = len(json.load(f))
+        except:
+            pass
+        new_count = len(data)
+        if old_count > 100 and new_count < old_count * 0.5:
+            print(f"⚠️ 警告：数据异常缩水！旧:{old_count} 新:{new_count}，拒绝覆盖！")
+            return
+
+    # 2. 先备份原文件
+    backup_file = filepath + '.bak'
+    try:
+        if os.path.exists(filepath):
+            import shutil
+            shutil.copy2(filepath, backup_file)
+    except:
+        pass
+
+    # 3. 安全写入
+    try:
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"❌ 保存 {filepath} 失败: {e}")
+        if os.path.exists(backup_file):
+            try:
+                import shutil
+                shutil.copy2(backup_file, filepath)
+                print("🔄 已从备份恢复原文件")
+            except:
+                pass
 
 
 def save_links(data):
@@ -273,9 +311,13 @@ def format_file_size(size):
     else:
         return f"{size / (1024 * 1024):.2f} MB"
 
+
 def fetch_emails(email_addr, auth_code, limit=10):
     folders = ["INBOX", "Junk"]
     try:
+        # 【刹车 1】连接前强制休息 0.5 秒，降低并发
+        time.sleep(0.5)
+
         mail = imaplib.IMAP4_SSL("imap.qq.com", 993, timeout=15)
         mail.login(email_addr, auth_code)
         ad_folders = get_ad_folders(mail)
@@ -289,6 +331,9 @@ def fetch_emails(email_addr, auth_code, limit=10):
     all_emails = []
     for folder in folders:
         try:
+            # 【刹车 1】连接前强制休息 0.5 秒
+            time.sleep(0.5)
+
             mail = imaplib.IMAP4_SSL("imap.qq.com", 993, timeout=15)
             mail.login(email_addr, auth_code)
             status, _ = mail.select(folder)
@@ -329,7 +374,7 @@ def fetch_emails(email_addr, auth_code, limit=10):
                 preview_text = re.sub(r"\s+", " ", preview_text).strip()
                 preview = preview_text[:120] + ("..." if len(preview_text) > 120 else "")
 
-                # ================= 附件解析（改为缓存 ID 方式） =================
+                # ================= 附件解析（缓存 ID 方式） =================
                 attachments = []
                 if msg.is_multipart():
                     for part in msg.walk():
@@ -369,6 +414,8 @@ def fetch_emails(email_addr, auth_code, limit=10):
                 })
             mail.logout()
         except Exception:
+            # 【刹车 2】遇到错误强制休息 5 秒，避开腾讯风控
+            time.sleep(5)
             try:
                 mail.logout()
             except Exception:
@@ -664,7 +711,7 @@ def cleanup_old_backups(max_keep=30):
                 pass
 
 
-# ============ 附件下载/预览路由（新增） ============
+# ============ 附件下载/预览路由 ============
 
 @app.route("/download/<att_id>")
 def download_attachment(att_id):
@@ -788,7 +835,7 @@ def total_query_input_html(error_msg=""):
                     <button type="submit">查询邮件</button>
                 </form>
             </div>
-            <div class="footer">mailauto.zeabur.app</div>
+            <div class="footer">mail-auto.zeabur.app</div>
         </div>
     </body>
     </html>
@@ -808,7 +855,6 @@ def total_query_result_html(email_addr, emails_data):
         date_str = mail.get("date_str", "")
         preview = mail.get("preview", "")
 
-        # 构建附件 HTML（改为 /download/ 链接）
         attachments_html = ""
         if mail.get("attachments"):
             attachments_html += '<div class="attachments-area">'
@@ -929,7 +975,7 @@ def total_query_result_html(email_addr, emails_data):
             <div class="email-list">
                 {cards_html}
             </div>
-            <div class="footer">mailauto.zeabur.app</div>
+            <div class="footer">mail-auto.zeabur.app</div>
         </div>
         <script>
             function toggleEmail(idx) {{
@@ -1443,7 +1489,7 @@ def sub_query_input_html(link_id, expire_at, error_msg=""):
                     <strong>提示:</strong> 请输入您购买的完整邮箱地址，点击邮件卡片即可查看完整内容。
                 </div>
             </div>
-            <div class="footer">mailauto.zeabur.app</div>
+            <div class="footer">mail-auto.zeabur.app</div>
         </div>
     </body>
     </html>
@@ -1463,7 +1509,6 @@ def sub_query_result_html(link_id, email_addr, expire_at, emails_data):
         date_str = mail.get("date_str", "")
         preview = mail.get("preview", "")
 
-        # 构建附件 HTML（改为 /download/ 链接）
         attachments_html = ""
         if mail.get("attachments"):
             attachments_html += '<div class="attachments-area">'
@@ -1566,7 +1611,7 @@ def sub_query_result_html(link_id, email_addr, expire_at, emails_data):
             <div class="email-list">
                 {cards_html}
             </div>
-            <div class="footer">mailauto.zeabur.app</div>
+            <div class="footer">mail-auto.zeabur.app</div>
         </div>
         <script>
             function toggleEmail(idx) {{
@@ -1581,8 +1626,52 @@ def sub_query_result_html(link_id, email_addr, expire_at, emails_data):
     """
 
 
-# ============ 启动 ============
+# ============ 闲鱼自动发货接口（完全兼容旧系统） ============
+@app.route("/api/auto_create_link", methods=["POST"])
+def auto_create_link():
+    data = request.get_json() or {}
 
+    type_name = data.get("type", "英文")
+    try:
+        quantity = int(data.get("quantity", 1))
+        days = int(data.get("days", 30))
+    except (TypeError, ValueError):
+        return "quantity 和 days 必须为整数", 400
+
+    buyer_id = str(data.get("buyer_id") or secrets.token_urlsafe(8))
+
+    if quantity <= 0:
+        return "数量必须大于0", 400
+
+    all_accounts = parse_accounts()
+
+    def detect_type(email):
+        if email.endswith("@foxmail.com"):
+            return "foxmail"
+        username = email.split("@")[0]
+        return "数字" if username.isdigit() else "英文"
+
+    type_emails = [e for e in all_accounts.keys() if detect_type(e) == type_name]
+    if not type_emails:
+        return f"类型 '{type_name}' 没有可用邮箱", 400
+
+    if len(type_emails) < quantity:
+        return f"库存不足，需要 {quantity} 个，实际只有 {len(type_emails)} 个", 400
+
+    selected_emails = random.sample(type_emails, quantity)
+
+    link_id = create_sub_link(selected_emails, days, max_emails=50)
+    link_url = f"https://{DOMAIN}/s/{link_id}"
+    expire_at = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+
+    return f"""您购买的邮箱已发货
+邮箱：
+{chr(10).join(selected_emails)}
+查询链接：{link_url}
+有效期至：{expire_at}"""
+
+
+# ============ 启动 ============
 if __name__ == "__main__":
     for f in [LINKS_FILE, BACKUP_FILE]:
         if not os.path.exists(f):

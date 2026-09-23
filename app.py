@@ -23,7 +23,7 @@ app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=2)
 TEMP_ATTACHMENT_CACHE = {}
 
 ADMIN_PASSWORD = "060910"
-DOMAIN = "mail-auto.zeabur.app"          # 你的域名
+DOMAIN = "mail-auto.zeabur.app"          # 请确认这个域名和闲鱼后台配置的一致
 PORT = int(os.environ.get("PORT", 8080))
 
 DATA_DIR = "/data"
@@ -33,7 +33,7 @@ ACCOUNTS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "accoun
 LINKS_FILE = os.path.join(DATA_DIR, "links.json")
 BACKUP_FILE = os.path.join(DATA_DIR, "links_backup.json")
 
-# ===== 全局缓存账号数据，防止反复读取大文件拖死程序 =====
+# ===== 全局缓存账号数据 =====
 _ACCOUNTS_CACHE = None
 
 
@@ -92,7 +92,7 @@ def save_links(data):
 
 
 def parse_accounts():
-    """加载账号，带缓存，只读一次，后续直接返回内存数据"""
+    """加载账号，带缓存，只读一次"""
     global _ACCOUNTS_CACHE
     if _ACCOUNTS_CACHE is not None:
         return _ACCOUNTS_CACHE
@@ -316,6 +316,7 @@ def format_file_size(size):
         return f"{size / (1024 * 1024):.2f} MB"
 
 
+# ==================== 【关键修改】排序逻辑已修复 ====================
 def fetch_emails(email_addr, auth_code, limit=10):
     folders = ["INBOX", "Junk"]
     try:
@@ -352,7 +353,11 @@ def fetch_emails(email_addr, auth_code, limit=10):
             fetch_ids = mail_ids[-fetch_count:]
             folder_label, folder_type = get_folder_label(folder)
             for mid in reversed(fetch_ids):
-                status, msg_data = mail.fetch(mid, "(RFC822)")
+                try:
+                    status, msg_data = mail.fetch(mid, "(RFC822)")
+                except Exception as fetch_err:
+                    print(f"⚠️ FETCH 失败，跳过这封邮件: {fetch_err}")
+                    continue
                 if status != "OK":
                     continue
                 msg = email.message_from_bytes(msg_data[0][1])
@@ -418,14 +423,11 @@ def fetch_emails(email_addr, auth_code, limit=10):
             except Exception:
                 pass
 
-    for e in all_emails:
-        if e["date_dt"] is not None and e["date_dt"].tzinfo is not None:
-            from datetime import timezone
-            utc_dt = e["date_dt"].astimezone(timezone.utc)
-            e["date_dt"] = utc_dt.replace(tzinfo=None) + timedelta(hours=8)
+    # 【核心】按真实时间戳排序，最新的在最前面
     all_emails.sort(key=lambda x: x["date_dt"] or datetime.min, reverse=True)
 
     return all_emails[:limit]
+# ================================================================
 
 
 def sanitize_email_html(html_content):
@@ -1634,7 +1636,7 @@ def auto_create_link():
     except (TypeError, ValueError):
         return "quantity 和 days 必须为整数"
 
-    # 【关键修改】同时兼容 buyer_id 和 remark 两种字段名
+    # 同时兼容 buyer_id 和 remark 两种字段名
     buyer_id = str(data.get("buyer_id") or data.get("remark") or secrets.token_urlsafe(8))
 
     if quantity <= 0:

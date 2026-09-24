@@ -7,6 +7,7 @@ import email
 import base64
 import time
 import random
+import threading
 from email.header import decode_header
 from email.utils import parsedate_to_datetime
 from datetime import datetime, timedelta
@@ -316,7 +317,7 @@ def format_file_size(size):
         return f"{size / (1024 * 1024):.2f} MB"
 
 
-# ==================== 【关键修改】排序逻辑已修复 ====================
+# ==================== 【关键修改】收件箱+垃圾箱混合，按服务器真实接收时间排序 ====================
 def fetch_emails(email_addr, auth_code, limit=10):
     folders = ["INBOX", "Junk"]
     try:
@@ -353,6 +354,19 @@ def fetch_emails(email_addr, auth_code, limit=10):
             fetch_ids = mail_ids[-fetch_count:]
             folder_label, folder_type = get_folder_label(folder)
             for mid in reversed(fetch_ids):
+                # 【关键】抓腾讯服务器分配的真实接收时间 INTERNALDATE，永不解析失败
+                server_timestamp = 0
+                try:
+                    status2, date_data = mail.fetch(mid, "(INTERNALDATE)")
+                    if status2 == "OK" and date_data:
+                        internal_str = date_data[0].decode() if isinstance(date_data[0], bytes) else str(date_data[0])
+                        match = re.search(r'INTERNALDATE\s+"([^"]+)"', internal_str)
+                        if match:
+                            internal_dt = parsedate_to_datetime(match.group(1))
+                            server_timestamp = internal_dt.timestamp()
+                except Exception:
+                    server_timestamp = 0
+
                 try:
                     status, msg_data = mail.fetch(mid, "(RFC822)")
                 except Exception as fetch_err:
@@ -372,7 +386,7 @@ def fetch_emails(email_addr, auth_code, limit=10):
                         utc_dt = date_dt.astimezone(timezone.utc)
                         date_dt = utc_dt.replace(tzinfo=None) + timedelta(hours=8)
                 except Exception:
-                    date_dt = datetime.now()
+                    date_dt = None
                 date_str = format_email_time(raw_date)
                 body = get_email_body(msg)
                 preview_text = re.sub(r"<[^>]+>", " ", body)
@@ -411,6 +425,7 @@ def fetch_emails(email_addr, auth_code, limit=10):
                     "from": from_,
                     "date_str": date_str,
                     "date_dt": date_dt,
+                    "server_timestamp": server_timestamp,
                     "body_html": body,
                     "preview": preview,
                     "attachments": attachments,
@@ -423,8 +438,8 @@ def fetch_emails(email_addr, auth_code, limit=10):
             except Exception:
                 pass
 
-    # 【核心】按真实时间戳排序，最新的在最前面
-    all_emails.sort(key=lambda x: x["date_dt"] or datetime.min, reverse=True)
+    # 【核心】收件箱和垃圾箱混合，严格按腾讯服务器真实接收时间排序，最新的在最前面
+    all_emails.sort(key=lambda x: x.get("server_timestamp", 0), reverse=True)
 
     return all_emails[:limit]
 # ================================================================
@@ -1636,13 +1651,11 @@ def auto_create_link():
     except (TypeError, ValueError):
         return "quantity 和 days 必须为整数"
 
-    # 同时兼容 buyer_id 和 remark 两种字段名
     buyer_id = str(data.get("buyer_id") or data.get("remark") or secrets.token_urlsafe(8))
 
     if quantity <= 0:
         return "数量必须大于0"
 
-    # 兼容闲鱼可能传过来的“QQ英文邮箱”等规格名
     if type_name == "QQ英文邮箱":
         type_name = "英文"
     elif type_name == "QQ数字邮箱":
@@ -1665,7 +1678,6 @@ def auto_create_link():
 
     selected_emails = random.sample(type_emails, quantity)
 
-    # 闲鱼发货生成的子链接固定只查 1 封，绝不查邮件，保证秒级返回
     link_id = create_sub_link(selected_emails, days, max_emails=1)
     link_url = f"https://{DOMAIN}/s/{link_id}"
     expire_at = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
@@ -1675,6 +1687,51 @@ def auto_create_link():
 {chr(10).join(selected_emails)}
 查询链接：{link_url}
 有效期至：{expire_at}"""
+
+
+# ============ 自动清理过期链接（带防缩水保护） ============
+def auto_clean_expired_worker():
+    """每天自动清理过期链接，带防缩水保护，防止误删"""
+    while True:
+        time.sleep(86400)  # 24 小时执行一次
+        try:
+            links = get_links()
+            if not links:
+                continue
+
+            now = datetime.now()
+            cleaned_count = 0
+            cleaned_links = {}
+
+            for link_id, link_data in links.items():
+                expire_at = link_data.get("expire_at")
+                is_expired = False
+                if expire_at:
+                    try:
+                        expire_dt = datetime.strptime(expire_at, "%Y-%m-%d %H:%M:%S")
+                        if now > expire_dt:
+                            is_expired = True
+                    except Exception:
+                        pass
+
+                if is_expired:
+                    cleaned_count += 1
+                    continue
+
+                cleaned_links[link_id] = link_data
+
+            if cleaned_count > 0:
+                if len(cleaned_links) < len(links) * 0.5:
+                    print(f"⚠️ 自动清理异常：本次清理 {cleaned_count} 条，剩余 {len(cleaned_links)} 条，缩水超过一半，拒绝执行！")
+                    continue
+
+                save_links(cleaned_links)
+                print(f"✅ 自动清理完成：删除了 {cleaned_count} 条过期链接，剩余 {len(cleaned_links)} 条。")
+        except Exception as e:
+            print(f"❌ 自动清理出错: {e}")
+
+auto_clean_thread = threading.Thread(target=auto_clean_expired_worker, daemon=True)
+auto_clean_thread.start()
 
 
 # ============ 启动 ============

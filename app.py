@@ -8,6 +8,7 @@ import base64
 import time
 import random
 import threading
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from email.header import decode_header
 from email.utils import parsedate_to_datetime
 from datetime import datetime, timedelta
@@ -1639,7 +1640,69 @@ def sub_query_result_html(link_id, email_addr, expire_at, emails_data):
     """
 
 
-# ============ 闲鱼自动发货接口（秒级返回，纯文本响应） ============
+# ============ 发货前实时检查邮箱 ============
+def check_delivery_mailbox(email_addr, auth_code):
+    """实际登录并只读打开收件箱；空收件箱也属于可用邮箱。"""
+    mail = None
+    try:
+        mail = imaplib.IMAP4_SSL("imap.qq.com", 993, timeout=10)
+        status, _ = mail.login(email_addr, auth_code)
+        if status != "OK":
+            return False
+        status, _ = mail.select("INBOX", readonly=True)
+        return status == "OK"
+    except (imaplib.IMAP4.error, OSError, EOFError):
+        # 授权失败、网络超时等均跳过本次候选；不永久判定授权码失效。
+        return False
+    finally:
+        if mail is not None:
+            try:
+                mail.logout()
+            except Exception:
+                try:
+                    mail.shutdown()
+                except Exception:
+                    pass
+
+
+def select_delivery_mailboxes(accounts, candidates, quantity):
+    """每次发货最多同时检查三个候选，凑齐即返回，不缓存成功结果。"""
+    candidates = list(dict.fromkeys(candidates))
+    random.shuffle(candidates)
+    selected = []
+    if quantity <= 0 or not candidates:
+        return selected
+    remaining = iter(candidates)
+    executor = ThreadPoolExecutor(max_workers=min(3, len(candidates)))
+    pending = {}
+    # 捕获检测函数，后台任务不依赖请求上下文。
+    check = check_delivery_mailbox
+    try:
+        while True:
+            while len(pending) < 3:
+                email_addr = next(remaining, None)
+                if email_addr is None:
+                    break
+                future = executor.submit(check, email_addr, accounts[email_addr])
+                pending[future] = email_addr
+            if not pending:
+                return selected
+            completed, _ = wait(pending, return_when=FIRST_COMPLETED)
+            for future in completed:
+                email_addr = pending.pop(future)
+                if future.result():
+                    selected.append(email_addr)
+                    if len(selected) == quantity:
+                        return selected
+    finally:
+        for future in pending:
+            future.cancel()
+        # 不用 with：退出上下文会等待慢任务，拖延已经凑齐的发货。
+        # 已经开始的检测会在后台结束并关闭连接，不会生成额外链接。
+        executor.shutdown(wait=False)
+
+
+# ============ 闲鱼自动发货接口（实时检测，纯文本响应） ============
 @app.route("/api/auto_create_link", methods=["POST"])
 def auto_create_link():
     data = request.get_json() or {}
@@ -1676,7 +1739,15 @@ def auto_create_link():
     if len(type_emails) < quantity:
         return f"库存不足，需要 {quantity} 个，实际只有 {len(type_emails)} 个"
 
-    selected_emails = random.sample(type_emails, quantity)
+    selected_emails = select_delivery_mailboxes(all_accounts, type_emails, quantity)
+    if len(selected_emails) < quantity:
+        return (
+            f"发货失败：需要 {quantity} 个可用邮箱，本次实时检测仅有 "
+            f"{len(selected_emails)} 个可用。其余邮箱授权验证或连接失败，"
+            "未生成发货链接，请检查邮箱配置或稍后重试。",
+            503,
+            {"Content-Type": "text/plain; charset=utf-8"},
+        )
 
     link_id = create_sub_link(selected_emails, days, max_emails=1)
     link_url = f"https://{DOMAIN}/s/{link_id}"

@@ -850,7 +850,7 @@ def total_query_input_html(error_msg=""):
                     <button type="submit">查询邮件</button>
                 </form>
             </div>
-            <div class="footer">mail-auto.zeabur.app</div>
+            <div class="footer">43.133.197.85:8083</div>
         </div>
     </body>
     </html>
@@ -990,7 +990,7 @@ def total_query_result_html(email_addr, emails_data):
             <div class="email-list">
                 {cards_html}
             </div>
-            <div class="footer">mail-auto.zeabur.app</div>
+            <div class="footer">43.133.197.85:8083</div>
         </div>
         <script>
             function toggleEmail(idx) {{
@@ -1503,7 +1503,7 @@ def sub_query_input_html(link_id, expire_at, error_msg=""):
                     <strong>提示:</strong> 请输入您购买的完整邮箱地址，点击邮件卡片即可查看完整内容。
                 </div>
             </div>
-            <div class="footer">mail-auto.zeabur.app</div>
+            <div class="footer">43.133.197.85:8083</div>
         </div>
     </body>
     </html>
@@ -1625,7 +1625,7 @@ def sub_query_result_html(link_id, email_addr, expire_at, emails_data):
             <div class="email-list">
                 {cards_html}
             </div>
-            <div class="footer">mail-auto.zeabur.app</div>
+            <div class="footer">43.133.197.85:8083</div>
         </div>
         <script>
             function toggleEmail(idx) {{

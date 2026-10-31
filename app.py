@@ -25,7 +25,7 @@ app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=2)
 TEMP_ATTACHMENT_CACHE = {}
 
 ADMIN_PASSWORD = "060910"
-DOMAIN = "mail-auto.zeabur.app"          # 请确认这个域名和闲鱼后台配置的一致
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "http://43.133.197.85:8083").rstrip("/")
 PORT = int(os.environ.get("PORT", 8080))
 
 DATA_DIR = "/data"
@@ -1075,7 +1075,7 @@ def create_link_page():
             max_emails = 10
 
         link_id = create_sub_link(allowed_emails, days, max_emails)
-        link_url = f"https://{DOMAIN}/s/{link_id}"
+        link_url = f"{PUBLIC_BASE_URL}/s/{link_id}"
         expire_at = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
         return render_template_string(gen_success_html(link_url, allowed_emails, max_emails, expire_at))
 
@@ -1750,7 +1750,7 @@ def auto_create_link():
         )
 
     link_id = create_sub_link(selected_emails, days, max_emails=1)
-    link_url = f"https://{DOMAIN}/s/{link_id}"
+    link_url = f"{PUBLIC_BASE_URL}/s/{link_id}"
     expire_at = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
 
     return f"""您购买的邮箱已发货

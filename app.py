@@ -25,7 +25,7 @@ app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=2)
 TEMP_ATTACHMENT_CACHE = {}
 
 ADMIN_PASSWORD = "060910"
-PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "http://43.133.197.85:8083").rstrip("/")
+PUBLIC_BASE_URL = "http://43.133.197.85:8083"
 PORT = int(os.environ.get("PORT", 8080))
 
 DATA_DIR = "/data"
